@@ -14,9 +14,11 @@ description: >-
   — use the on-screen zoom/fit buttons (ctrl+wheel overshoots into blank canvas);
   don't re-open the URL to navigate (it reloads to an empty canvas) — pan/zoom in
   the live session and map the annotations once before reading; and the board
-  hangs on a splash unless you spoof a real Chrome user-agent. Triggers include
-  "change requests on this miro", "summarize this miro page", "extract from this
-  miro".
+  hangs on a splash unless you spoof a real Chrome user-agent. A sign-up banner
+  overlays the top-center of every screenshot, and a current-vs-redesign mockup
+  pair is too wide to read in one shot — sweep it at a locked zoom. Triggers
+  include "change requests on this miro", "summarize this miro page", "extract
+  from this miro".
 allowed-tools: Bash(agent-browser:*), Bash(curl:*), Read
 ---
 
@@ -81,6 +83,16 @@ agent-browser --session miro screenshot ./miro-shots/00-loaded.png   # Read it: 
 about, so you land near it. Get the board name for free:
 `curl -s "<board-url>" | grep -o 'og:title" content="[^"]*"'`.
 
+**Anonymous vs signed-in.** This recipe opens *anonymously* (top-right reads
+"Comment only"). Fine for a quick read — but Miro then pins a **"Continue
+collaborating… / Sign up for free" banner over the top-center of the canvas**,
+occluding a ~500px-wide strip in *every* screenshot (§3). For a **large
+multi-widget job**, open with a persisted `--profile` and sign in once: the
+banner disappears and the cache warms, so re-opening anchors — your main
+multi-widget navigation move (§3) — drops from a 20-90s cold load to a few
+seconds. Same `--profile` mechanism as the private-board path in
+[troubleshooting](references/troubleshooting.md).
+
 If the canvas never appears, it's bot detection, a blocked CDN, or a private
 board — see [references/troubleshooting.md](references/troubleshooting.md).
 
@@ -120,6 +132,11 @@ Whenever you re-open: re-run the canvas poll from step 1 (never a blind `sleep`)
 count can still show gray skeleton boxes for a few seconds — if the shot is
 skeleton, wait and re-shoot. (Red ink / annotations usually paint *before* mockup
 textures, so you can often read the notes even while the mockup is still gray.)
+**Mockup textures are lazy, per-zoom tiles** — a region can sit gray at a deep
+zoom while the *same* mockup is already painted one step out (its lower-res tiles
+were cached earlier). So if a high-zoom shot is skeleton, **zoom out one step and
+re-shoot** instead of only waiting; and because the ink paints first, most change
+requests are legible even if the UI underneath never finishes painting.
 
 Read the canvas in **two passes — map first, then read each item once.** This is
 the single thing that stops the back-and-forth:
@@ -145,6 +162,31 @@ clipped at the viewport edge, zoom out one step to fit it whole — don't nudge 
 pan a little at a time** (that's a trial-and-error loop of 4-5 shots; one zoom-out
 usually frames the entire note in a single shot, readable at a lower level).
 
+**Content wider than one legible viewport — sweep, don't fit.** A design-review
+page is often a *pair* — the current screen and its "# Change it to…" redesign
+side by side — with annotations on the *outer* edges of both. That whole unit is
+too wide to read in one shot: at a zoom where the ink is legible (~75-100%) it
+overflows the ~1900px image cap, and zooming out to fit makes the handwriting
+unreadable. So don't try to frame it all at once — **sweep it at a locked zoom:**
+1. Pick a legible zoom and **lock it** — don't touch zoom again until the sweep
+   ends (changing zoom mid-sweep brings back the pan+zoom overshoot).
+2. Center the unit's **left edge**, screenshot.
+3. Pan right with the horizontal wheel (`mouse move 800 500; mouse wheel 0 <dx>`)
+   by a step that advances ~⅔ of a viewport, so the new shot **overlaps the
+   previous by ~30%** (one landmark visible in both). Calibrate `dx` once on the
+   second shot, then keep it fixed.
+4. Repeat until you pass the unit's right edge.
+Every annotation lands legible in *some* shot and the overlap guarantees nothing
+hides in a seam. This is the fix for the recurring "the rename note was clipped,
+treat it as best-guess" outcome — sweep instead of nudging the pan.
+
+**A sign-up banner hides the top-center of every shot.** Anonymous sessions get a
+~500px-wide "Sign up for free" banner pinned over the top-center canvas (§1).
+Anything under it — an annotation, a mockup's title bar — is *silently* gone. If a
+note seems to start mid-sentence at the top edge, it's clipped by the banner: pan
+that content into the **clear middle** of the viewport (or sign in via
+`--profile`) and re-shoot.
+
 **Before you declare done, your read count must equal your mapped count.**
 Re-zoom to the full-extent view and confirm every red region is accounted for.
 "I panned right and the screens had no annotations" is **not** a completeness
@@ -160,7 +202,10 @@ where it all fits, the ink is unreadable. So:
    re-opening it; read that screen + the annotations immediately around it at a
    legible zoom (~30-50%) with only small right-drags; then move to the next anchor
    by **re-opening it — don't pan across the whole canvas between distant screens**
-   (that's where runs get lost and burn 20+ shots).
+   (that's where runs get lost and burn 20+ shots — in past runs *every* recovery
+   was a re-open, never a rescue-pan). If re-opens feel too slow to resist panning,
+   that's the signal to open with a `--profile` (§1) so they're fast — not to start
+   free-panning between widgets.
 3. For screens *between* anchors, right-drag locally at 30-50%. If you lose your
    place, re-open the nearest anchor rather than hunting blindly.
 The completeness rule still holds: count the screens / annotation regions you must

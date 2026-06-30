@@ -110,3 +110,24 @@ panel), **frame names** (Frames panel), board search, and all app chrome. Use
   panning across the canvas.
 - **Save screenshots in your working dir, not the skill folder.**
 - **One session for the whole task** (`--session miro`); `close` it when done.
+
+## G) A "Sign up for free" banner covers the top-center of every shot
+Anonymous sessions (top-right reads "Comment only") get a ~500px-wide **"Continue
+collaborating… / Sign up for free" banner pinned over the top-center of the
+canvas**. It rides the *viewport*, not the board, so it occludes the same strip in
+every screenshot — and anything under it (an annotation, a mockup's title bar) is
+silently hidden. Two fixes:
+- **Cheap:** know it's there. Never read content in the top-center band — bring it
+  into the **middle** of the viewport first, then shoot. A note that "starts
+  mid-sentence" at the top edge is usually clipped by the banner, not incomplete.
+- **Clean:** open with a persisted `--profile` and sign in once (same as A3) — the
+  banner is a nag for anonymous users and disappears when signed in. Bonus: the
+  cache warms, so re-opening anchors gets much faster.
+
+## H) Mockup stays gray after the canvas poll passes (lazy tiles)
+The canvas-present poll only means the board *engine* booted; the mockup raster is
+drawn as **lazy per-zoom tiles**. A region can stay gray at a deep zoom while the
+same mockup is already painted one step out (lower-res tiles cached earlier). Don't
+just wait — **zoom out one step and re-shoot**. And the red ink paints before the
+mockup textures, so you can usually read the change request while the UI is still
+gray; only chase the painted UI when you actually need to see it.

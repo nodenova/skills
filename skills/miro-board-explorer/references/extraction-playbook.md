@@ -116,6 +116,14 @@ zoomed into a small region, and fall back to 1× if a shot fails to process.
 to fit it whole** rather than nudging the pan a little at a time — the nudge loop
 burns 4-5 shots; one zoom-out usually frames the whole note in a single shot.
 
+**Wider than one legible viewport (current+new pairs)?** Zoom-out-to-fit makes the
+ink unreadable and widen-to-1900 hits the image cap — so **sweep at a locked zoom**
+instead (full steps in SKILL.md §3). The one calibration that matters: set the
+horizontal-wheel step `mouse wheel 0 <dx>` so the second shot overlaps the first
+~30%, then reuse that same `dx` for every step — don't re-derive it per shot, and
+don't change zoom mid-sweep (that reintroduces the overshoot). A locked-zoom,
+fixed-step pan is the one pan that never overshoots.
+
 **Map the full extent before you read, and count to declare done** (SKILL.md §3).
 The `moveToWidget` landing is often the *edge* of the cluster, and annotations sit
 *beside* the screen they describe — so zoom out until every red mark is in one
@@ -136,3 +144,19 @@ to a comment author/date or annotation + a `moveToWidget` deep link + a
 screenshot file), and open questions. State assumptions explicitly — a board is
 a sketch and some intent is inferred. Close the session when done:
 `agent-browser --session miro close`.
+
+## 10. Faster path for *typed* content: the Miro REST API (optional)
+If you have a Miro API token whose team owns (or can access) the board, `GET
+/v2/boards/{id}/items` returns every widget as structured JSON — **frame names,
+sticky notes, text boxes, shape labels, and the bounding box of each item** — with
+exact text and coordinates, no screenshots. That turns "zoom out and count red
+blobs to map the page" into an exact list, and removes transcription error for any
+*typed* text. Two limits keep it a complement, not a replacement:
+- **Freehand ink isn't text.** The red handwritten change requests are pen/drawing
+  strokes; the API returns their geometry (so you can *map* them precisely) but not
+  their words — you still vision-read those from screenshots.
+- **Auth + reach.** Needs a token and the board in/visible to that team; the
+  `?moveToWidget=<id>` value is the item id you can pass straight to the API. In a
+  DNS-restricted env `api.miro.com` may be blocked (see troubleshooting A2).
+Use it to get the page skeleton + an exact annotation map fast, then screenshot
+only the freehand notes. No token? The live-canvas method above is the whole job.
