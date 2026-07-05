@@ -9,6 +9,7 @@ A skill is a folder with a `SKILL.md`. The frontmatter `description` tells the a
 | Skill | What it does |
 |-------|--------------|
 | [`miro-board-explorer`](skills/miro-board-explorer) | Reads and extracts the real content of a Miro board from a share link — change requests, comments, frame names, and the red annotations drawn on mockups — and turns it into a dev-ready summary. Drives `agent-browser` live and encodes the moves that keep an agent from getting lost on Miro's WebGL canvas. |
+| [`figma-implement-design`](skills/figma-implement-design) | Reads a Figma design through the browser and implements it as UI at 100% fidelity. Drives the Claude-in-Chrome extension against the user's signed-in Figma and extracts exact specs (font, size, line-height, letter-spacing, radius, padding, gap, autolayout, fills) from the inspect panel as DOM text instead of eyeballing pixels — then maps them onto the project's own tokens and verifies element-by-element. Encodes the moves that keep an agent from mis-selecting nodes or over-trusting a full-page glance. |
 
 ## Install
 
@@ -38,7 +39,9 @@ You don't invoke skills by name. Describe the task, and the agent matches it aga
 
 > Pull the change requests off this Miro board: https://miro.com/app/board/…
 
-Some skills depend on external tools — `miro-board-explorer`, for example, needs the `agent-browser` CLI. Each skill's `SKILL.md` lists its requirements up top.
+> Implement this screen to match the design: https://www.figma.com/design/…?node-id=…
+
+Some skills depend on external tools — `miro-board-explorer` needs the `agent-browser` CLI; `figma-implement-design` drives the [Claude-in-Chrome](https://www.anthropic.com/news/claude-in-chrome) browser extension against a Chrome that's signed into Figma. Each skill's `SKILL.md` lists its requirements up top.
 
 ## Repo layout
 
