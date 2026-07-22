@@ -180,9 +180,13 @@ it lands you centered at ~30%. Treat the provided links as anchors.
 Whenever you re-open: re-run **`board_ready()`** from step 1 (never a blind
 `sleep`, and never the bare canvas-count check — that opens ~45s early and hands
 you a skeleton). A re-open is a full cold load: **budget 50-60s** before anything
-is worth capturing, then confirm the PNG is >20 KB before you Read it. (Red ink /
-annotations usually paint *before* mockup textures, so you can often read the
-notes even while the mockup is still gray.)
+is worth capturing, then confirm the PNG is >50 KB before you Read it.
+
+Red ink and annotations do paint *before* mockup textures — but that is a warning,
+not a shortcut. It is exactly the blurry half-render from §1: the notes are
+legible while **every UI string next to them is still a smear**. If you read that
+frame, read *only* the annotations from it, and never transcribe mockup copy until
+`board_ready()` has opened.
 
 Read the canvas in **two passes — map first, then read each item once.** This is
 the single thing that stops the back-and-forth:
