@@ -94,17 +94,26 @@ panel), **frame names** (Frames panel), board search, and all app chrome. Use
 `snapshot` for those; use screenshots only for the canvas art. Don't dismiss
 `snapshot` — on change-request boards it's where the requests actually are.
 
-## F) Screenshots are blank white or a grey skeleton
+## F) Screenshots are blank, skeleton, or blurry
 **This is the single most common silent failure — you shot too early.** See §G
-for the timings and the gate. Diagnose without spending a vision token:
+for the timings and the gate. Diagnose without spending a vision token, at the
+`1600 1000` viewport this skill sets:
 
 ```bash
-ls -l ./miro-shots/*.png    # ~3 KB = blank, ~10 KB = skeleton, ~150 KB = real board
+ls -l ./miro-shots/*.png    # ~11 KB = blank, ~15 KB = skeleton, ~265 KB = rendered board
 ```
 
-If a shot is small, **do not Read it** — re-run `board_ready()`, wait, re-shoot.
-A skeleton screenshot is not "a board with nothing on it"; runs have read them as
-real and produced confident output grounded in nothing.
+If a shot is under ~50 KB, **do not Read it** — re-run `board_ready()`, wait,
+re-shoot. A skeleton screenshot is not "a board with nothing on it"; runs have
+read them as real and produced confident output grounded in nothing.
+
+**Size cannot tell you a shot is *ready*, only that it isn't blank.** There is a
+half-rendered state where shapes, red ink and handwriting have painted but the
+**mockup text is still a blurry smear** — and it measures **~332 KB, larger than
+the finished 265 KB**. It is the most dangerous frame on the board: it reads as a
+real screenshot, so any UI copy "transcribed" from it is invented. `board_ready()`
+excludes it (`innerText` 187 blurry vs 413 crisp — that is why the threshold is
+200). Never substitute a file-size check for the gate.
 
 If the *browser process dies* right as the board would paint, that's not Miro:
 SwiftShader software rasterization peaks at ~3.4-4 GiB, and a 4 GiB container
@@ -117,18 +126,21 @@ The `<canvas>` element is created ~45 seconds before Miro paints into it.
 Measured on a real board (Chrome for Testing 151, agent-browser 0.32.3):
 
 ```
-t=5s   canvas=0  title="Miro"             textLen=4     <- nothing yet
-t=10s  canvas=1  title="Miro"             textLen=4     <- a naive canvas-count gate OPENS HERE
-t=16s  canvas=7  title="Miro"             textLen=4
-t=21s  canvas=7  title="Vlad Copy - Miro" textLen=16    <- title resolves; still a skeleton
-t=42s  canvas=7  title="Vlad Copy - Miro" textLen=16
-t=53s  canvas=7  title="Vlad Copy - Miro" textLen=412   <- BOARD ACTUALLY PAINTED
+t=5s   canvas=0  title="Miro"             textLen=4     png=--      <- nothing yet
+t=10s  canvas=1  title="Miro"             textLen=4     png= 11 KB  <- a naive canvas-count gate OPENS HERE
+t=16s  canvas=7  title="Miro"             textLen=4     png= 15 KB
+t=21s  canvas=7  title="Vlad Copy - Miro" textLen=16    png= 15 KB  <- title resolves; still a skeleton
+t=32s  canvas=7  title="Vlad Copy - Miro" textLen=16    png= 15 KB
+t=40s  canvas=7  title="Vlad Copy - Miro" textLen=187   png=332 KB  <- ink painted, MOCKUP TEXT STILL BLURRY
+t=48s  canvas=7  title="Vlad Copy - Miro" textLen=413   png=265 KB  <- BOARD ACTUALLY READABLE
 ```
 
-So both `canvases > 0` **and** `document.title` are false signals. The only one
-that flips at paint time is Miro's accessibility overview populating —
-`document.body.innerText.length` jumping from ~16 to 400+. That is what
-`board_ready()` tests, and it costs nothing.
+So `canvases > 0`, `document.title` **and file size** are all false signals — note
+the blurry t=40 frame is the *largest* file of the run. The only one that tracks
+readability is Miro's accessibility overview populating:
+`document.body.innerText.length` going 4 → 16 (skeleton) → 187 (blurry) → 413
+(crisp). `board_ready()` tests `> 200`, which sits in the gap between the blurry
+and crisp states — that placement is deliberate, not arbitrary. It costs nothing.
 
 ## H) Misc
 - **Cold loads are slow — budget 50-60s, allow up to 180s.** Use

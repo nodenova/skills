@@ -8,9 +8,11 @@ hand, looking at output between steps. Order matters: **text sources first
 Save screenshots under your **project/working directory**, not the skill folder
 (e.g. `./miro-shots/`). Name them by content so they double as evidence:
 `meetings-1.png`, `payment-detail.png`. Read every shot before moving on —
-but `ls -l` it first: **under ~20 KB means nothing painted** (a blank frame is
-~3 KB, a grey skeleton ~10 KB, a real board ~150 KB), so don't spend vision
-tokens on it.
+but `ls -l` it first: at the `1600 1000` viewport, **under ~50 KB means nothing
+painted** (blank ≈11 KB, grey skeleton ≈15 KB, rendered ≈265 KB), so don't spend
+vision tokens on it. Size is a blank detector *only* — the blurry half-rendered
+frame is ~332 KB, bigger than the finished board, so never read "large" as
+"ready". `board_ready()` decides that.
 
 ## 1. Identify the board (no rendering)
 ```bash

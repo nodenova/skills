@@ -107,13 +107,29 @@ screenshot inside the loop** — a shot taken before the gate opens is a blank
 white frame or a grey skeleton, and reading it costs a turn plus vision tokens
 for nothing.
 
-**Sanity-check the file size before you Read the image — it's free.** A painted
-board screenshot is ~150 KB; a blank or skeleton one is 3-10 KB. That is a ~15×
-difference, so it is unambiguous:
+**There is a half-rendered state, and it is the dangerous one.** Miro resolves
+the board in two waves: shapes, red ink and handwritten annotations paint
+*first*, and the **mockup text stays blurry and unreadable for another ~8s**. A
+shot taken then looks convincingly like a real board — you'd read the
+annotations fine — but every UI string on it is a smear, so any copy you
+"transcribe" from it is invented. `board_ready()` already excludes this state
+(measured: `innerText` is 187 while blurry, 413 once text is crisp); that's
+precisely why the threshold is 200 and not lower. **Don't lower it.**
+
+**Sanity-check the file size before you Read the image — it's free**, but know
+what it can and cannot tell you. At the `1600 1000` viewport this skill sets:
+blank ≈ 11 KB, grey skeleton ≈ 15 KB, fully rendered ≈ 265 KB.
 
 ```bash
-ls -l ./miro-shots/00-loaded.png    # under ~20 KB => nothing painted, keep waiting
+ls -l ./miro-shots/00-loaded.png    # under ~50 KB => nothing painted, keep waiting
 ```
+
+That is a **blank/skeleton detector only — never a readiness signal.** The
+blurry half-rendered frame above measures ~332 KB, *larger* than the finished
+265 KB, so "bigger file" does not mean "more ready". `board_ready()` is the
+authority; `ls -l` only saves you from Reading an empty frame. (Sizes scale with
+viewport — at a smaller viewport a skeleton can be ~10 KB, so re-baseline the
+floor if you change `set viewport`.)
 
 **Never test paint with `gl.readPixels()`.** Miro allocates a 4096×4096 backing
 canvas; reading pixels back from it pushed a 4 GiB container over its memory
