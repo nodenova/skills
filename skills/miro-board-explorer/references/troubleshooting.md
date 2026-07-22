@@ -6,7 +6,8 @@ command after attempting to open:
 ```bash
 agent-browser --session miro eval --stdin <<'EOF'
 JSON.stringify({
-  canvases: document.querySelectorAll('canvas').length,         // >0 => board rendered
+  canvases: document.querySelectorAll('canvas').length,         // >0 => canvas EXISTS, NOT that it painted
+  painted:  document.body.innerText.length > 200,               // true => board actually rendered
   loading:  document.body.className.includes('app-loading'),    // true => still bootstrapping
   webdriver: navigator.webdriver,                               // true => bot detection may stall Miro
   ua: navigator.userAgent.slice(0, 60),                         // must NOT contain "HeadlessChrome"
@@ -15,6 +16,7 @@ JSON.stringify({
 })
 EOF
 ```
+**`canvases > 0` does not mean the board rendered** — see §G. Read `painted`.
 
 **A1 — Bot detection** (`webdriver:true` or `ua` contains `HeadlessChrome`):
 close the session, set a real Chrome UA + disable the automation flag, reopen.
@@ -52,13 +54,13 @@ Don't try to bypass an access wall.
 ## B) `open` "times out" — expected, not a failure
 Miro keeps realtime connections open, so a normal load event never fires;
 `open` and `wait --load networkidle` both time out even when the board is fine.
-**Poll for `<canvas>` instead** (SKILL.md step 1). A non-zero canvas count with
-`loading:false` means it rendered — ignore the timeout text.
+**Poll `board_ready()` instead** (SKILL.md step 1) — ignore the timeout text.
 
 This applies to **every** `open`, including a re-open to re-center: after any
-re-open, re-run the poll — **never a blind `sleep`** — or you'll screenshot a
-blank skeleton while the canvas is still rendering. Better still, don't re-open to
-navigate at all (pan/zoom in-session); re-opening is a last resort.
+re-open, re-run the gate — **never a blind `sleep`, and never a bare canvas
+count** — or you'll screenshot a blank skeleton while the board is still
+rendering. Better still, don't re-open to navigate at all (pan/zoom in-session);
+re-opening is a last resort that costs a full 50-60s cold load.
 
 ## C) Zoom shortcuts do nothing
 Miro's **keyboard zoom shortcuts (`Alt+1`, `Ctrl+=`/`Ctrl+-`, arrow keys) do not
@@ -92,9 +94,46 @@ panel), **frame names** (Frames panel), board search, and all app chrome. Use
 `snapshot` for those; use screenshots only for the canvas art. Don't dismiss
 `snapshot` — on change-request boards it's where the requests actually are.
 
-## F) Misc
-- **Cold loads are slow (20-90s).** Use `AGENT_BROWSER_DEFAULT_TIMEOUT=90000`
-  and poll. A `--profile` warms the cache so re-opens are faster.
+## F) Screenshots are blank white or a grey skeleton
+**This is the single most common silent failure — you shot too early.** See §G
+for the timings and the gate. Diagnose without spending a vision token:
+
+```bash
+ls -l ./miro-shots/*.png    # ~3 KB = blank, ~10 KB = skeleton, ~150 KB = real board
+```
+
+If a shot is small, **do not Read it** — re-run `board_ready()`, wait, re-shoot.
+A skeleton screenshot is not "a board with nothing on it"; runs have read them as
+real and produced confident output grounded in nothing.
+
+If the *browser process dies* right as the board would paint, that's not Miro:
+SwiftShader software rasterization peaks at ~3.4-4 GiB, and a 4 GiB container
+gets OOM-killed at exactly that moment. Raise the memory limit. And never probe
+paint with `gl.readPixels()` on the 4096×4096 backing canvas — that is what
+pushed it over in the first place.
+
+## G) Why `canvases > 0` is a trap (measured)
+The `<canvas>` element is created ~45 seconds before Miro paints into it.
+Measured on a real board (Chrome for Testing 151, agent-browser 0.32.3):
+
+```
+t=5s   canvas=0  title="Miro"             textLen=4     <- nothing yet
+t=10s  canvas=1  title="Miro"             textLen=4     <- a naive canvas-count gate OPENS HERE
+t=16s  canvas=7  title="Miro"             textLen=4
+t=21s  canvas=7  title="Vlad Copy - Miro" textLen=16    <- title resolves; still a skeleton
+t=42s  canvas=7  title="Vlad Copy - Miro" textLen=16
+t=53s  canvas=7  title="Vlad Copy - Miro" textLen=412   <- BOARD ACTUALLY PAINTED
+```
+
+So both `canvases > 0` **and** `document.title` are false signals. The only one
+that flips at paint time is Miro's accessibility overview populating —
+`document.body.innerText.length` jumping from ~16 to 400+. That is what
+`board_ready()` tests, and it costs nothing.
+
+## H) Misc
+- **Cold loads are slow — budget 50-60s, allow up to 180s.** Use
+  `AGENT_BROWSER_DEFAULT_TIMEOUT=90000` and poll `board_ready()`. A `--profile`
+  warms the cache so re-opens are faster.
 - **Blurry screenshot text:** zoom in more before capturing, and/or use a retina
   viewport (`set viewport 1600 1000 2`) for 2× pixel density. **Image-size limit:** a
   screenshot's pixel width is `viewport_width × dpr`; above ~2000px it **fails to
@@ -105,29 +144,8 @@ panel), **frame names** (Frames panel), board search, and all app chrome. Use
 - **`mouse wheel` doesn't pan vertically — it ZOOMS.** Use horizontal wheel
   (`mouse wheel 0 <dx>`) for left/right and a **right-button drag** for up/down
   (left-drag selects a frame). See extraction-playbook.md §5.
-- **Re-anchor when lost:** re-open a `?moveToWidget=` link (poll + confirm the
-  mockup painted, not gray skeleton). For big multi-screen clusters this beats
-  panning across the canvas.
+- **Re-anchor when lost:** re-open a `?moveToWidget=` link, then re-run
+  `board_ready()` and budget the full cold load. For big multi-screen clusters
+  this beats panning across the canvas.
 - **Save screenshots in your working dir, not the skill folder.**
 - **One session for the whole task** (`--session miro`); `close` it when done.
-
-## G) A "Sign up for free" banner covers the top-center of every shot
-Anonymous sessions (top-right reads "Comment only") get a ~500px-wide **"Continue
-collaborating… / Sign up for free" banner pinned over the top-center of the
-canvas**. It rides the *viewport*, not the board, so it occludes the same strip in
-every screenshot — and anything under it (an annotation, a mockup's title bar) is
-silently hidden. Two fixes:
-- **Cheap:** know it's there. Never read content in the top-center band — bring it
-  into the **middle** of the viewport first, then shoot. A note that "starts
-  mid-sentence" at the top edge is usually clipped by the banner, not incomplete.
-- **Clean:** open with a persisted `--profile` and sign in once (same as A3) — the
-  banner is a nag for anonymous users and disappears when signed in. Bonus: the
-  cache warms, so re-opening anchors gets much faster.
-
-## H) Mockup stays gray after the canvas poll passes (lazy tiles)
-The canvas-present poll only means the board *engine* booted; the mockup raster is
-drawn as **lazy per-zoom tiles**. A region can stay gray at a deep zoom while the
-same mockup is already painted one step out (lower-res tiles cached earlier). Don't
-just wait — **zoom out one step and re-shoot**. And the red ink paints before the
-mockup textures, so you can usually read the change request while the UI is still
-gray; only chase the painted UI when you actually need to see it.

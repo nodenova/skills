@@ -13,12 +13,12 @@ description: >-
   downscaled, so pixel clicks miss); Miro keyboard zoom shortcuts do NOT register
   — use the on-screen zoom/fit buttons (ctrl+wheel overshoots into blank canvas);
   don't re-open the URL to navigate (it reloads to an empty canvas) — pan/zoom in
-  the live session and map the annotations once before reading; and the board
-  hangs on a splash unless you spoof a real Chrome user-agent. A sign-up banner
-  overlays the top-center of every screenshot, and a current-vs-redesign mockup
-  pair is too wide to read in one shot — sweep it at a locked zoom. Triggers
-  include "change requests on this miro", "summarize this miro page", "extract
-  from this miro".
+  the live session and map the annotations once before reading; the board hangs on
+  a splash unless you spoof a real Chrome user-agent; and — the one that silently
+  ruins runs — a `<canvas>` element exists ~45s BEFORE Miro paints into it, so
+  gate every screenshot on the board actually having painted, never on the canvas
+  existing. Triggers include "change requests on this miro", "summarize this miro
+  page", "extract from this miro".
 allowed-tools: Bash(agent-browser:*), Bash(curl:*), Read
 ---
 
@@ -49,8 +49,13 @@ So: **mine the text sources first** (comments + frames), *then* screenshot the
 canvas for the visual mockups and annotations the text didn't cover. Don't try
 to read everything off pixels — you'll waste turns.
 
-Two more rules that prevent the dead-ends seen in real runs:
+Three more rules that prevent the dead-ends seen in real runs:
 
+- **Never screenshot before the board has PAINTED.** A `<canvas>` element is in
+  the DOM ~45 seconds before Miro draws the board into it. Screenshots taken in
+  that window are blank white or a grey skeleton, and they look enough like
+  "a board that has nothing on it" that runs have read them as real and produced
+  confident output grounded in nothing. Use the `board_ready()` gate in step 1.
 - **Click elements by `@ref` from `snapshot`, not by pixel coordinates.** The
   screenshot image you view is downscaled (e.g. 800px wide) from the real
   viewport (1600px), so coordinates you eyeball are ~2× off and your clicks
@@ -65,35 +70,64 @@ Two more rules that prevent the dead-ends seen in real runs:
 
 Miro stalls forever on the yellow splash under default headless settings (bot
 detection), and never fires a normal load event. Spoof a real Chrome UA, then
-**poll for the `<canvas>`** instead of trusting `open`/`networkidle`:
+**poll until the board has actually PAINTED** — not merely until a `<canvas>`
+exists:
 
 ```bash
 export AGENT_BROWSER_USER_AGENT="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
 export AGENT_BROWSER_ARGS="--disable-blink-features=AutomationControlled"
 export AGENT_BROWSER_DEFAULT_TIMEOUT=90000
+
+# Ready = a full-size canvas EXISTS *and* Miro's accessibility overview has
+# populated. That text (document.body.innerText) jumps from ~16 to 400+ chars at
+# the exact moment the canvas paints, and it is the only signal that does.
+# Canvas-count alone opens ~45s TOO EARLY; document.title resolves ~32s too early.
+board_ready() {
+  agent-browser --session miro eval '(() => {
+    const canvas = [...document.querySelectorAll("canvas")].some(c => c.width > 600 && c.height > 400);
+    return canvas && document.body.innerText.length > 200;
+  })()' 2>/dev/null | grep -q true
+}
+
 agent-browser --session miro set viewport 1600 1000
 agent-browser --session miro open "<board-url>" >/dev/null 2>&1   # 'open' itself times out — that's NORMAL, ignore it
-# Poll until the canvas renders (cold load takes 20-90s):
-until agent-browser --session miro eval 'document.querySelectorAll("canvas").length' 2>/dev/null | grep -qE '[1-9]'; do sleep 3; done
+
+waited=0
+until board_ready; do
+  if [ $waited -ge 180 ]; then echo "board never painted after ${waited}s — see troubleshooting"; break; fi
+  sleep 5; waited=$(( waited + 5 ))
+done
+
 agent-browser --session miro screenshot ./miro-shots/00-loaded.png   # Read it: where did the link drop you?
 ```
+
+**Expect the wait to be 50-60s on a cold load.** Measured on a real board: canvas
+element appears at ~10s, board paints at ~53s. Don't shorten it, and **don't
+screenshot inside the loop** — a shot taken before the gate opens is a blank
+white frame or a grey skeleton, and reading it costs a turn plus vision tokens
+for nothing.
+
+**Sanity-check the file size before you Read the image — it's free.** A painted
+board screenshot is ~150 KB; a blank or skeleton one is 3-10 KB. That is a ~15×
+difference, so it is unambiguous:
+
+```bash
+ls -l ./miro-shots/00-loaded.png    # under ~20 KB => nothing painted, keep waiting
+```
+
+**Never test paint with `gl.readPixels()`.** Miro allocates a 4096×4096 backing
+canvas; reading pixels back from it pushed a 4 GiB container over its memory
+limit and the OOM killer took the whole browser down mid-run (reproduced twice).
+The `board_ready()` DOM check above costs nothing. For the same reason, if the
+browser dies *at the moment the board paints*, suspect the container memory
+limit, not the board — SwiftShader software rasterization peaks at ~3.4-4 GiB.
 
 `<board-url>` is exactly what the user gave you, including any
 `?moveToWidget=<id>` — that param centers the initial view on the item they care
 about, so you land near it. Get the board name for free:
 `curl -s "<board-url>" | grep -o 'og:title" content="[^"]*"'`.
 
-**Anonymous vs signed-in.** This recipe opens *anonymously* (top-right reads
-"Comment only"). Fine for a quick read — but Miro then pins a **"Continue
-collaborating… / Sign up for free" banner over the top-center of the canvas**,
-occluding a ~500px-wide strip in *every* screenshot (§3). For a **large
-multi-widget job**, open with a persisted `--profile` and sign in once: the
-banner disappears and the cache warms, so re-opening anchors — your main
-multi-widget navigation move (§3) — drops from a 20-90s cold load to a few
-seconds. Same `--profile` mechanism as the private-board path in
-[troubleshooting](references/troubleshooting.md).
-
-If the canvas never appears, it's bot detection, a blocked CDN, or a private
+If the board never paints, it's bot detection, a blocked CDN, or a private
 board — see [references/troubleshooting.md](references/troubleshooting.md).
 
 ## 2. Mine the text sources (do this before screenshotting mockups)
@@ -122,21 +156,17 @@ material on the board.
 
 **You land on the target from the initial `open`.** For a **single page**, stay
 there and move with local pan/zoom — re-opening just to nudge a little is a
-wasteful 20-90s cold reload. **But for a large multi-screen cluster (or when the
+wasteful 50-60s cold reload. **But for a large multi-screen cluster (or when the
 user gave several `?moveToWidget=` links), re-opening a widget link is the *most
 reliable* way to jump to a distant screen or recover when you get lost panning** —
 it lands you centered at ~30%. Treat the provided links as anchors.
 
-Whenever you re-open: re-run the canvas poll from step 1 (never a blind `sleep`),
-**then confirm the mockup actually painted before reading.** A passing canvas
-count can still show gray skeleton boxes for a few seconds — if the shot is
-skeleton, wait and re-shoot. (Red ink / annotations usually paint *before* mockup
-textures, so you can often read the notes even while the mockup is still gray.)
-**Mockup textures are lazy, per-zoom tiles** — a region can sit gray at a deep
-zoom while the *same* mockup is already painted one step out (its lower-res tiles
-were cached earlier). So if a high-zoom shot is skeleton, **zoom out one step and
-re-shoot** instead of only waiting; and because the ink paints first, most change
-requests are legible even if the UI underneath never finishes painting.
+Whenever you re-open: re-run **`board_ready()`** from step 1 (never a blind
+`sleep`, and never the bare canvas-count check — that opens ~45s early and hands
+you a skeleton). A re-open is a full cold load: **budget 50-60s** before anything
+is worth capturing, then confirm the PNG is >20 KB before you Read it. (Red ink /
+annotations usually paint *before* mockup textures, so you can often read the
+notes even while the mockup is still gray.)
 
 Read the canvas in **two passes — map first, then read each item once.** This is
 the single thing that stops the back-and-forth:
@@ -162,31 +192,6 @@ clipped at the viewport edge, zoom out one step to fit it whole — don't nudge 
 pan a little at a time** (that's a trial-and-error loop of 4-5 shots; one zoom-out
 usually frames the entire note in a single shot, readable at a lower level).
 
-**Content wider than one legible viewport — sweep, don't fit.** A design-review
-page is often a *pair* — the current screen and its "# Change it to…" redesign
-side by side — with annotations on the *outer* edges of both. That whole unit is
-too wide to read in one shot: at a zoom where the ink is legible (~75-100%) it
-overflows the ~1900px image cap, and zooming out to fit makes the handwriting
-unreadable. So don't try to frame it all at once — **sweep it at a locked zoom:**
-1. Pick a legible zoom and **lock it** — don't touch zoom again until the sweep
-   ends (changing zoom mid-sweep brings back the pan+zoom overshoot).
-2. Center the unit's **left edge**, screenshot.
-3. Pan right with the horizontal wheel (`mouse move 800 500; mouse wheel 0 <dx>`)
-   by a step that advances ~⅔ of a viewport, so the new shot **overlaps the
-   previous by ~30%** (one landmark visible in both). Calibrate `dx` once on the
-   second shot, then keep it fixed.
-4. Repeat until you pass the unit's right edge.
-Every annotation lands legible in *some* shot and the overlap guarantees nothing
-hides in a seam. This is the fix for the recurring "the rename note was clipped,
-treat it as best-guess" outcome — sweep instead of nudging the pan.
-
-**A sign-up banner hides the top-center of every shot.** Anonymous sessions get a
-~500px-wide "Sign up for free" banner pinned over the top-center canvas (§1).
-Anything under it — an annotation, a mockup's title bar — is *silently* gone. If a
-note seems to start mid-sentence at the top edge, it's clipped by the banner: pan
-that content into the **clear middle** of the viewport (or sign in via
-`--profile`) and re-shoot.
-
 **Before you declare done, your read count must equal your mapped count.**
 Re-zoom to the full-extent view and confirm every red region is accounted for.
 "I panned right and the screens had no annotations" is **not** a completeness
@@ -202,10 +207,7 @@ where it all fits, the ink is unreadable. So:
    re-opening it; read that screen + the annotations immediately around it at a
    legible zoom (~30-50%) with only small right-drags; then move to the next anchor
    by **re-opening it — don't pan across the whole canvas between distant screens**
-   (that's where runs get lost and burn 20+ shots — in past runs *every* recovery
-   was a re-open, never a rescue-pan). If re-opens feel too slow to resist panning,
-   that's the signal to open with a `--profile` (§1) so they're fast — not to start
-   free-panning between widgets.
+   (that's where runs get lost and burn 20+ shots).
 3. For screens *between* anchors, right-drag locally at 30-50%. If you lose your
    place, re-open the nearest anchor rather than hunting blindly.
 The completeness rule still holds: count the screens / annotation regions you must
@@ -233,8 +235,8 @@ agent-browser --session miro snapshot | grep -oE '[0-9]+%' | tail -1
 ```
 If it's absurd (>400% or <25%), fix the zoom before you screenshot. More
 generally: **before any screenshot that follows a reload or a zoom change, check
-cheaply (canvas present, not loading, zoom sane) that the view is worth
-capturing.** A blank screenshot still costs a turn and vision tokens.
+cheaply (board painted, zoom sane) that the view is worth capturing.** A blank
+screenshot still costs a turn and vision tokens.
 
 **Panning — the mechanics are non-obvious, and getting them wrong wastes dozens of
 shots.** Miro does **not** pan the way you'd expect from the mouse wheel:
@@ -301,8 +303,9 @@ reading. When done: `agent-browser --session miro close`.
   failed attempts.
 - **Don't re-open to navigate, and don't ctrl+wheel to zoom** — both produce blank
   screenshots. Stay in the live session; zoom with the +/- buttons.
-- **Look cheaply before you shoot:** read canvas-ready / zoom-% with `eval` or
-  `snapshot` (text) before spending a screenshot you then have to view.
+- **Look cheaply before you shoot:** `board_ready()` and the zoom-% are text reads
+  (≈free); `ls -l` on the PNG is free. Spend a vision token only on an image you
+  already know is worth reading.
 - `grep` the `snapshot` output for what you need instead of dumping the whole
   tree every time.
 - Don't re-screenshot or re-read an unchanged view. Act, then verify once.
@@ -311,4 +314,4 @@ reading. When done: `agent-browser --session miro close`.
 | File | When to read |
 |------|--------------|
 | [references/extraction-playbook.md](references/extraction-playbook.md) | Full explore→read→summarize method: comments/frames panels, board search, panning, reading mockups, dev-handoff format |
-| [references/troubleshooting.md](references/troubleshooting.md) | Stuck on splash, bot detection, blocked CDN, private boards, why keyboard zoom fails, the downscaled-coordinate trap |
+| [references/troubleshooting.md](references/troubleshooting.md) | Stuck on splash, blank/skeleton screenshots, bot detection, blocked CDN, private boards, why keyboard zoom fails, the downscaled-coordinate trap |

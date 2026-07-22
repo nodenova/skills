@@ -7,7 +7,10 @@ hand, looking at output between steps. Order matters: **text sources first
 ## 0. Working folder
 Save screenshots under your **project/working directory**, not the skill folder
 (e.g. `./miro-shots/`). Name them by content so they double as evidence:
-`meetings-1.png`, `payment-detail.png`. Read every shot before moving on.
+`meetings-1.png`, `payment-detail.png`. Read every shot before moving on —
+but `ls -l` it first: **under ~20 KB means nothing painted** (a blank frame is
+~3 KB, a grey skeleton ~10 KB, a real board ~150 KB), so don't spend vision
+tokens on it.
 
 ## 1. Identify the board (no rendering)
 ```bash
@@ -16,8 +19,10 @@ curl -s "<board-url>" | grep -oE '<meta property="og:(title|url)" content="[^"]*
 `og:title` is the board name — use it as your heading.
 
 ## 2. Open once, then stay in the session
-See SKILL.md step 1 for the exact open + poll recipe. After the canvas renders,
-do **not** re-open for every move — navigate within the live session.
+See SKILL.md step 1 for the exact open + `board_ready()` recipe. **The gate is
+"the board has painted", not "a canvas exists"** — the element shows up ~45s
+before Miro draws into it. After the board paints, do **not** re-open for every
+move — navigate within the live session.
 
 ## 3. Comments = the change requests (read these first)
 On boards used for design review, the actual requests are Miro **comments**, and
@@ -48,7 +53,9 @@ agent-browser --session miro snapshot | grep -oE 'option "[^"]*"' | sort -u   # 
 Match the page the user named (e.g. "Meetings"). If no frame has that name, it's
 a **free-floating mockup**, not a frame — find it with the user's `moveToWidget`
 link or by panning. (There may also be an **"Explore board content" / outline**
-feature that lists structure — check the snapshot for it.)
+feature that lists structure — check the snapshot for it. Its presence is also
+the signal `board_ready()` keys on: that outline text only populates once the
+board has actually painted.)
 
 ## 5. Navigate to a region
 The panning mechanics on Miro are non-obvious — getting them wrong is the single
@@ -70,9 +77,9 @@ biggest source of wasted shots. Move in this order of preference:
   screen. For a *single small page* it's a wasteful cold reload, so pan locally
   instead. But for a **large multi-screen cluster** (or multiple provided links),
   jumping between distant screens by re-opening beats panning across the canvas.
-  Always re-run the canvas poll (SKILL.md step 1) **and confirm the mockup painted**
-  (gray skeleton boxes mean wait + re-shoot) — never a blind `sleep`. Get an id via
-  right-click item → **Copy link**.
+  Always re-run **`board_ready()`** (SKILL.md step 1) — **never a blind `sleep`,
+  and never a bare canvas-count check** — and budget **50-60s** for the reload.
+  Get an id via right-click item → **Copy link**.
 
 ## 6. Zoom — on-screen buttons, never keyboard or ctrl+wheel
 Keyboard zoom shortcuts do **not** register on the Miro canvas. Zoom with the
@@ -112,17 +119,14 @@ viewport (`set viewport 1600 1000 2`) sharpens small text but at a wide viewport
 the image can exceed the screenshot size limit and error out — use retina only
 zoomed into a small region, and fall back to 1× if a shot fails to process.
 
+**Never probe paint with `gl.readPixels()`.** Miro's backing canvas is 4096×4096;
+reading it back OOM-killed a 4 GiB container mid-run (reproduced twice). Use the
+free signals: `board_ready()` for paint, `ls -l` for "did this shot capture
+anything".
+
 **Clipped annotation?** If a note runs off the viewport edge, **zoom out one step
 to fit it whole** rather than nudging the pan a little at a time — the nudge loop
 burns 4-5 shots; one zoom-out usually frames the whole note in a single shot.
-
-**Wider than one legible viewport (current+new pairs)?** Zoom-out-to-fit makes the
-ink unreadable and widen-to-1900 hits the image cap — so **sweep at a locked zoom**
-instead (full steps in SKILL.md §3). The one calibration that matters: set the
-horizontal-wheel step `mouse wheel 0 <dx>` so the second shot overlaps the first
-~30%, then reuse that same `dx` for every step — don't re-derive it per shot, and
-don't change zoom mid-sweep (that reintroduces the overshoot). A locked-zoom,
-fixed-step pan is the one pan that never overshoots.
 
 **Map the full extent before you read, and count to declare done** (SKILL.md §3).
 The `moveToWidget` landing is often the *edge* of the cluster, and annotations sit
@@ -144,19 +148,3 @@ to a comment author/date or annotation + a `moveToWidget` deep link + a
 screenshot file), and open questions. State assumptions explicitly — a board is
 a sketch and some intent is inferred. Close the session when done:
 `agent-browser --session miro close`.
-
-## 10. Faster path for *typed* content: the Miro REST API (optional)
-If you have a Miro API token whose team owns (or can access) the board, `GET
-/v2/boards/{id}/items` returns every widget as structured JSON — **frame names,
-sticky notes, text boxes, shape labels, and the bounding box of each item** — with
-exact text and coordinates, no screenshots. That turns "zoom out and count red
-blobs to map the page" into an exact list, and removes transcription error for any
-*typed* text. Two limits keep it a complement, not a replacement:
-- **Freehand ink isn't text.** The red handwritten change requests are pen/drawing
-  strokes; the API returns their geometry (so you can *map* them precisely) but not
-  their words — you still vision-read those from screenshots.
-- **Auth + reach.** Needs a token and the board in/visible to that team; the
-  `?moveToWidget=<id>` value is the item id you can pass straight to the API. In a
-  DNS-restricted env `api.miro.com` may be blocked (see troubleshooting A2).
-Use it to get the page skeleton + an exact annotation map fast, then screenshot
-only the freehand notes. No token? The live-canvas method above is the whole job.
