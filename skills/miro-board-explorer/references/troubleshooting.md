@@ -1,5 +1,10 @@
 # Troubleshooting Miro
 
+**Platform first.** Run `uname -s`. Timings, memory ceilings and failure modes
+differ between a macOS desktop (`Darwin`) and a headless Linux container
+(`Linux`); every section below flags which numbers are which. The diagnostic
+commands are portable — they work on both.
+
 ## A) Board stuck on the yellow splash logo
 Three distinct causes — tell them apart before changing anything. Triage in one
 command after attempting to open:
@@ -30,7 +35,8 @@ agent-browser --session miro open "<board-url>"
 Verified: with both set, the UA loses `HeadlessChrome` and `navigator.webdriver`
 becomes `false`.
 
-**A2 — Blocked CDN / realtime** (`resources` tiny and never grows): Miro needs
+**A2 — Blocked CDN / realtime** (`resources` tiny and never grows) — **common on a
+locked-down container, rare on a desktop**: Miro needs
 three host groups — `miro.com` (app), `mirostatic.com` (the JS-bundle CDN), and
 `*.miro.com` (realtime, e.g. `rtmp.miro.com`). If only `miro.com` is reachable,
 the bundles never load and the canvas can't render.
@@ -54,13 +60,16 @@ Don't try to bypass an access wall.
 ## B) `open` "times out" — expected, not a failure
 Miro keeps realtime connections open, so a normal load event never fires;
 `open` and `wait --load networkidle` both time out even when the board is fine.
-**Poll `board_ready()` instead** (SKILL.md step 1) — ignore the timeout text.
+**Poll the ready gate instead** (SKILL.md step 1) — ignore the timeout text. Wrap
+the `open` in `timeout 25` so the Bash call returns quickly instead of blocking:
+a Bash call that overruns the tool timeout can be killed, and that leaks a browser
+(§H).
 
 This applies to **every** `open`, including a re-open to re-center: after any
 re-open, re-run the gate — **never a blind `sleep`, and never a bare canvas
 count** — or you'll screenshot a blank skeleton while the board is still
 rendering. Better still, don't re-open to navigate at all (pan/zoom in-session);
-re-opening is a last resort that costs a full 50-60s cold load.
+re-opening costs a full cold load (~25s on macOS, 50-60s in a container).
 
 ## C) Zoom shortcuts do nothing
 Miro's **keyboard zoom shortcuts (`Alt+1`, `Ctrl+=`/`Ctrl+-`, arrow keys) do not
@@ -100,52 +109,100 @@ for the timings and the gate. Diagnose without spending a vision token, at the
 `1600 1000` viewport this skill sets:
 
 ```bash
-ls -l ./miro-shots/*.png    # ~11 KB = blank, ~15 KB = skeleton, ~265 KB = rendered board
+ls -l ./miro-shots/*.png    # ~10-11 KB = blank, ~13-15 KB = skeleton (both platforms)
 ```
 
-If a shot is under ~50 KB, **do not Read it** — re-run `board_ready()`, wait,
+If a shot is under ~50 KB, **do not Read it** — re-run the ready gate, wait,
 re-shoot. A skeleton screenshot is not "a board with nothing on it"; runs have
 read them as real and produced confident output grounded in nothing.
 
 **Size cannot tell you a shot is *ready*, only that it isn't blank.** There is a
 half-rendered state where shapes, red ink and handwriting have painted but the
-**mockup text is still a blurry smear** — and it measures **~332 KB, larger than
-the finished 265 KB**. It is the most dangerous frame on the board: it reads as a
-real screenshot, so any UI copy "transcribed" from it is invented. `board_ready()`
-excludes it (`innerText` 187 blurry vs 413 crisp — that is why the threshold is
-200). Never substitute a file-size check for the gate.
+**mockup text is still a blurry smear**, and it is the most dangerous frame on the
+board: it reads as a real screenshot, so any UI copy "transcribed" from it is
+invented. Its size gives it away in neither direction — measured **74 KB on macOS**
+(comfortably over the 50 KB floor) and **~332 KB in the container, larger than that
+run's finished 265 KB**. A rendered board is likewise not a fixed size (~130 KB and
+~265 KB on two different boards/zooms). The gate excludes the blurry state on both
+platforms (`innerText` 111→414 on macOS, 187→413 in the container — that is why the
+threshold is 200). Never substitute a file-size check for the gate.
 
-If the *browser process dies* right as the board would paint, that's not Miro:
-SwiftShader software rasterization peaks at ~3.4-4 GiB, and a 4 GiB container
-gets OOM-killed at exactly that moment. Raise the memory limit. And never probe
-paint with `gl.readPixels()` on the 4096×4096 backing canvas — that is what
-pushed it over in the first place.
+**If the browser process dies right as the board would paint, that's memory, not
+Miro.** Container: SwiftShader software rasterization peaks at ~3.4-4 GiB and a
+4 GiB cgroup gets OOM-killed at exactly that moment — raise the limit, and make
+sure a leaked second instance isn't eating half of it (§H). macOS: it won't OOM
+(measured peak ~3.8 GB during load, ~1.3 GB idle), but two instances will make the
+machine crawl. Never probe paint with `gl.readPixels()` on the 4096×4096 backing
+canvas on either platform — that is what pushed the container over in the first
+place.
 
-## G) Why `canvases > 0` is a trap (measured)
-The `<canvas>` element is created ~45 seconds before Miro paints into it.
-Measured on a real board (Chrome for Testing 151, agent-browser 0.32.3):
+## G) Why `canvases > 0` is a trap (measured on both platforms)
+The `<canvas>` element is created **12s (macOS) to 45s (container) before** Miro
+paints into it. Same board, same skill, Chrome for Testing 151 / agent-browser
+0.32.3.
 
+**macOS (M2, real GPU — ANGLE Metal):**
 ```
-t=5s   canvas=0  title="Miro"             textLen=4     png=--      <- nothing yet
-t=10s  canvas=1  title="Miro"             textLen=4     png= 11 KB  <- a naive canvas-count gate OPENS HERE
-t=16s  canvas=7  title="Miro"             textLen=4     png= 15 KB
-t=21s  canvas=7  title="Vlad Copy - Miro" textLen=16    png= 15 KB  <- title resolves; still a skeleton
-t=32s  canvas=7  title="Vlad Copy - Miro" textLen=16    png= 15 KB
-t=40s  canvas=7  title="Vlad Copy - Miro" textLen=187   png=332 KB  <- ink painted, MOCKUP TEXT STILL BLURRY
-t=48s  canvas=7  title="Vlad Copy - Miro" textLen=413   png=265 KB  <- BOARD ACTUALLY READABLE
+t=4s   canvas=0  title="Miro"             textLen=4     png= 10 KB  <- nothing yet
+t=11s  canvas=3  title="Miro"             textLen=4     png= 13 KB  <- a naive canvas-count gate OPENS HERE
+t=15s  canvas=3  title="Vlad Copy - Miro" textLen=16    png= 13 KB  <- title resolves; still a skeleton
+t=19s  canvas=3  title="Vlad Copy - Miro" textLen=111   png= 74 KB  <- ink painted, MOCKUP TEXT STILL BLURRY
+t=23s  canvas=3  title="Vlad Copy - Miro" textLen=414   png=135 KB  <- BOARD ACTUALLY READABLE
 ```
 
-So `canvases > 0`, `document.title` **and file size** are all false signals — note
-the blurry t=40 frame is the *largest* file of the run. The only one that tracks
-readability is Miro's accessibility overview populating:
-`document.body.innerText.length` going 4 → 16 (skeleton) → 187 (blurry) → 413
-(crisp). `board_ready()` tests `> 200`, which sits in the gap between the blurry
-and crisp states — that placement is deliberate, not arbitrary. It costs nothing.
+**Headless Linux container (SwiftShader software raster) — same shape, ~2× slower:**
+```
+t=10s  canvas=1  title="Miro"             textLen=4     png= 11 KB  <- naive gate opens here, 45s early
+t=21s  canvas=7  title="Vlad Copy - Miro" textLen=16    png= 15 KB
+t=40s  canvas=7  title="Vlad Copy - Miro" textLen=187   png=332 KB  <- blurry, and the LARGEST file of the run
+t=48s  canvas=7  title="Vlad Copy - Miro" textLen=413   png=265 KB  <- readable
+```
 
-## H) Misc
-- **Cold loads are slow — budget 50-60s, allow up to 180s.** Use
-  `AGENT_BROWSER_DEFAULT_TIMEOUT=90000` and poll `board_ready()`. A `--profile`
-  warms the cache so re-opens are faster.
+So `canvases > 0`, `document.title` **and file size** are all false signals on both
+platforms — note the canvas *count* isn't even stable between them (3 vs 7), which
+is why the gate tests for a full-size canvas, not a count. The only signal that
+tracks readability is Miro's accessibility overview populating:
+`innerText.length` going 4 → 16 (skeleton) → ~111-187 (blurry) → ~414 (crisp). The
+gate tests `> 200`, which sits in the gap on both platforms — that placement is
+deliberate, not arbitrary. It costs nothing.
+
+## H) The machine crawls / RAM is gone / "why are two browsers running?"
+**Symptom:** during or after a run the host is starved — on macOS the desktop
+becomes sluggish; in a container Chrome gets OOM-killed. `agent-browser session
+list` shows one session (or none) and you can't see what's eating it.
+
+**Cause 1 — a leaked (orphaned) browser.** `agent-browser` runs a detached daemon
+that owns Chrome. Kill the daemon abnormally and Chrome is re-parented to PID 1 and
+keeps rendering the board forever. It is invisible to `session list` and immune to
+`close --all`, so nothing will ever reap it. Verified in a real run: two instances,
+6 seconds apart — the orphan still carrying the run's UA-spoof flags, the live one
+launched without them — together ~2 cores and ~2.5 GB, still going minutes after
+the agent had stopped. Things that kill a daemon: a Bash call killed for exceeding
+the tool timeout, `pkill` in the wrong order, a crash, an interrupted run.
+
+**Cause 2 — the board itself, still open.** One board = ~100% CPU and ~1.3 GB
+*idle*, forever (SKILL.md §0). Nothing is wrong; you just left it open.
+
+**Diagnose (portable, free):**
+```bash
+ps -Ao pid,ppid,command | grep "[a]gent-browser/browsers/chrome" | grep -v -- "--type=" \
+  | awk '{print ($2==1 ? "ORPHAN " : "live   "), $1}'
+```
+More than one line = more than one browser. `ORPHAN` = `close` cannot reap it.
+
+**Fix:** run the cleanup block in SKILL.md §5 (daemons first, then PPID-1
+leftovers, then verify the count is 0). Never `pkill` Chrome before the daemon —
+the daemon relaunches it and you end up worse off.
+
+**Prevent:** one session, one command at a time, no parallel Bash calls; keep every
+Bash call well under the tool timeout; close the board before you write up.
+
+## I) Misc
+- **Cold loads are slow — budget ~25s on macOS, 50-60s in a container; allow ~90s
+  / ~180s** before calling it a failure. Poll the ready gate in short repeated Bash
+  calls rather than one long one. A `--profile` warms the cache so re-opens are
+  faster (it is a launch option, so it must be on the command that starts the
+  browser).
 - **Blurry screenshot text:** zoom in more before capturing, and/or use a retina
   viewport (`set viewport 1600 1000 2`) for 2× pixel density. **Image-size limit:** a
   screenshot's pixel width is `viewport_width × dpr`; above ~2000px it **fails to
@@ -157,7 +214,7 @@ and crisp states — that placement is deliberate, not arbitrary. It costs nothi
   (`mouse wheel 0 <dx>`) for left/right and a **right-button drag** for up/down
   (left-drag selects a frame). See extraction-playbook.md §5.
 - **Re-anchor when lost:** re-open a `?moveToWidget=` link, then re-run
-  `board_ready()` and budget the full cold load. For big multi-screen clusters
+  the ready gate and budget the full cold load. For big multi-screen clusters
   this beats panning across the canvas.
 - **Save screenshots in your working dir, not the skill folder.**
 - **One session for the whole task** (`--session miro`); `close` it when done.

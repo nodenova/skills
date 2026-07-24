@@ -4,15 +4,23 @@ The full interactive method. You run `agent-browser --session miro` commands by
 hand, looking at output between steps. Order matters: **text sources first
 (cheap, exact), pixels last (expensive, fuzzy).**
 
-## 0. Working folder
+## 0. Working folder + the resource rule
 Save screenshots under your **project/working directory**, not the skill folder
 (e.g. `./miro-shots/`). Name them by content so they double as evidence:
 `meetings-1.png`, `payment-detail.png`. Read every shot before moving on —
 but `ls -l` it first: at the `1600 1000` viewport, **under ~50 KB means nothing
-painted** (blank ≈11 KB, grey skeleton ≈15 KB, rendered ≈265 KB), so don't spend
-vision tokens on it. Size is a blank detector *only* — the blurry half-rendered
-frame is ~332 KB, bigger than the finished board, so never read "large" as
-"ready". `board_ready()` decides that.
+painted** (blank ≈10-11 KB, grey skeleton ≈13-15 KB), so don't spend vision tokens
+on it. Size is a blank detector *only*: a rendered board is ~130-265 KB depending
+on board and zoom, and the blurry half-rendered frame lands anywhere in that range
+(74 KB on macOS, 332 KB in the container — bigger than that run's finished board).
+Never read "large" as "ready"; the ready gate decides that.
+
+**And the rule that outranks every technique here:** the board holds a CPU core and
+1.3-4 GB for as long as it is open, on macOS and in a container alike (SKILL.md §0).
+Work in one session, one command at a time, `close` the moment the reading is done,
+and finish every run — including failed ones — with the cleanup block in SKILL.md
+§5. A browser orphaned by a killed daemon renders the board forever and `close`
+cannot see it.
 
 ## 1. Identify the board (no rendering)
 ```bash
@@ -21,10 +29,11 @@ curl -s "<board-url>" | grep -oE '<meta property="og:(title|url)" content="[^"]*
 `og:title` is the board name — use it as your heading.
 
 ## 2. Open once, then stay in the session
-See SKILL.md step 1 for the exact open + `board_ready()` recipe. **The gate is
-"the board has painted", not "a canvas exists"** — the element shows up ~45s
-before Miro draws into it. After the board paints, do **not** re-open for every
-move — navigate within the live session.
+See SKILL.md step 1 for the exact open + ready-gate recipe (launch options must
+share ONE Bash call with the command that starts the browser; poll in short calls).
+**The gate is "the board has painted", not "a canvas exists"** — the element shows
+up 12s (macOS) to 45s (container) before Miro draws into it. After the board paints,
+do **not** re-open for every move — navigate within the live session.
 
 ## 3. Comments = the change requests (read these first)
 On boards used for design review, the actual requests are Miro **comments**, and
@@ -56,7 +65,7 @@ Match the page the user named (e.g. "Meetings"). If no frame has that name, it's
 a **free-floating mockup**, not a frame — find it with the user's `moveToWidget`
 link or by panning. (There may also be an **"Explore board content" / outline**
 feature that lists structure — check the snapshot for it. Its presence is also
-the signal `board_ready()` keys on: that outline text only populates once the
+the signal the ready gate keys on: that outline text only populates once the
 board has actually painted.)
 
 ## 5. Navigate to a region
@@ -79,9 +88,10 @@ biggest source of wasted shots. Move in this order of preference:
   screen. For a *single small page* it's a wasteful cold reload, so pan locally
   instead. But for a **large multi-screen cluster** (or multiple provided links),
   jumping between distant screens by re-opening beats panning across the canvas.
-  Always re-run **`board_ready()`** (SKILL.md step 1) — **never a blind `sleep`,
-  and never a bare canvas-count check** — and budget **50-60s** for the reload.
-  Get an id via right-click item → **Copy link**.
+  Always re-run **the ready gate** (SKILL.md step 1) — **never a blind `sleep`,
+  and never a bare canvas-count check** — and budget a full cold load for the
+  reload: **~25s on macOS, 50-60s in a container**. Get an id via right-click item
+  → **Copy link**.
 
 ## 6. Zoom — on-screen buttons, never keyboard or ctrl+wheel
 Keyboard zoom shortcuts do **not** register on the Miro canvas. Zoom with the
@@ -121,10 +131,16 @@ viewport (`set viewport 1600 1000 2`) sharpens small text but at a wide viewport
 the image can exceed the screenshot size limit and error out — use retina only
 zoomed into a small region, and fall back to 1× if a shot fails to process.
 
-**Never probe paint with `gl.readPixels()`.** Miro's backing canvas is 4096×4096;
-reading it back OOM-killed a 4 GiB container mid-run (reproduced twice). Use the
-free signals: `board_ready()` for paint, `ls -l` for "did this shot capture
-anything".
+**Never probe paint with `gl.readPixels()`, on either platform.** Miro's backing
+canvas is 4096×4096; reading it back OOM-killed a 4 GiB container mid-run
+(reproduced twice), and on a desktop it stalls a browser that is already holding a
+core. Use the free signals: the ready gate for paint, `ls -l` for "did this shot
+capture anything".
+
+**Each screenshot has a CPU price too** — the capture forces a GPU readback plus
+PNG encode, measured to roughly double the browser's draw (~100% idle → ~200%
+during a shooting loop) on macOS. One more reason to map first and read each
+region exactly once.
 
 **Clipped annotation?** If a note runs off the viewport edge, **zoom out one step
 to fit it whole** rather than nudging the pan a little at a time — the nudge loop
@@ -144,9 +160,16 @@ from the toolbar: `screenshot --annotate` to get a clickable ref for the search
 icon, click it, type the term, screenshot the results; clicking a result
 recenters the board on that item.
 
-## 9. Deliverable
+## 9. Close, then write the deliverable
+**Close first — `agent-browser --session miro close` — then write.** The write-up
+takes minutes and a parked board bills a core for each of them; everything you need
+is already in your notes and `./miro-shots/`.
+
 Structure it (see SKILL.md step 4): current state, requested changes (each tied
 to a comment author/date or annotation + a `moveToWidget` deep link + a
 screenshot file), and open questions. State assumptions explicitly — a board is
-a sketch and some intent is inferred. Close the session when done:
-`agent-browser --session miro close`.
+a sketch and some intent is inferred.
+
+Then run the cleanup block (SKILL.md §5) and confirm it prints 0 — `close` alone
+does not reap a browser whose daemon died, and that leftover renders the board at
+~100% CPU indefinitely.
