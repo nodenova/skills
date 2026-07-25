@@ -30,7 +30,9 @@ curl -s "<board-url>" | grep -oE '<meta property="og:(title|url)" content="[^"]*
 
 ## 2. Open once, then stay in the session
 See SKILL.md step 1 for the exact open + ready-gate recipe (launch options must
-share ONE Bash call with the command that starts the browser; poll in short calls).
+share ONE Bash call with the command that starts the browser — as **env vars**,
+not `--user-agent`, which the launch-only `open` silently ignores; poll in short
+calls).
 **The gate is "the board has painted", not "a canvas exists"** — the element shows
 up 12s (macOS) to 45s (container) before Miro draws into it. After the board paints,
 do **not** re-open for every move — navigate within the live session.
@@ -104,6 +106,11 @@ agent-browser --session miro click @<zoom-in-ref>     # or @<zoom-out-ref>, @<fi
 any panel or menu opens/closes, so a cached `@ref` clicks the wrong control or
 nothing. The buttons zoom toward the **viewport center**, so center your target
 with a right-drag first, then zoom in.
+
+`find role button click --name "Zoom in"` is an alternative that re-resolves each
+call and so never goes stale (wrong name → it lists the names it saw, no
+misclick). The mechanism is verified, Miro's exact button names are not — read
+them off a `snapshot` before relying on them.
 
 "Fit to screen" is often behind the zoom-percentage menu — open that menu, then
 click it. It resets the view to the whole board (useful to re-orient when you've

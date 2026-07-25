@@ -35,6 +35,21 @@ agent-browser --session miro open "<board-url>"
 Verified: with both set, the UA loses `HeadlessChrome` and `navigator.webdriver`
 becomes `false`.
 
+**Still `HeadlessChrome` after doing that? You used the flag, or a bare `open`.**
+`--user-agent` and `AGENT_BROWSER_USER_AGENT` are *not* interchangeable (verified
+on 0.33.0): the flag applies on `open <url>` but is **silently ignored on `open`
+with no URL** — the launch-only form that stages state before the first
+navigation. The env var applies on both. Since a UA-spoof failure looks identical
+to every other splash hang, always keep the `grep -q Headless` verify line from
+SKILL.md §1 rather than assuming the setting took.
+
+Note also that **launch options only bind to the command that actually starts the
+browser process.** A later command with different launch options can trigger
+`[agent-browser] relaunched browser` — watch for that line, because a relaunch
+without your env vars hands you an unspoofed browser mid-run. Re-run the triage
+`eval` after any relaunch. (`session info --json` reports it directly in
+`runtime.lifecycle.relaunchedBrowser`.)
+
 **A2 — Blocked CDN / realtime** (`resources` tiny and never grows) — **common on a
 locked-down container, rare on a desktop**: Miro needs
 three host groups — `miro.com` (app), `mirostatic.com` (the JS-bundle CDN), and
@@ -47,6 +62,15 @@ If `mirostatic.com` is blocked: add all three to `AGENT_BROWSER_ALLOWED_DOMAINS`
 if you use an allowlist; otherwise run from an environment that can reach the
 CDN. Fallback when you truly can't render: extract `og:title` from `miro.com`
 and tell the user the live canvas is unreachable and why.
+
+Verified compatibility of that allowlist, so you don't burn a run finding out:
+it **coexists fine with the UA spoof and with `--args`** (including
+`--disable-blink-features=AutomationControlled` and `--no-sandbox`), but it is
+**mutually exclusive with `--profile`** — the CLI refuses outright:
+`✗ --allowed-domains is not supported with --profile because Chrome may restore
+existing pages before network containment is installed`. So a **private board on
+an allowlisted network can't use both fixes at once** (A3 needs the profile).
+Pick one: drop the allowlist for that run, or get the board shared by link.
 
 **A3 — Private board** (`signin:true`, or a login / "Request access" page):
 the board isn't shared "anyone with the link." Authenticate with a persisted
@@ -76,6 +100,9 @@ Miro's **keyboard zoom shortcuts (`Alt+1`, `Ctrl+=`/`Ctrl+-`, arrow keys) do not
 register** through agent-browser on the canvas — pressing them is wasted turns.
 Zoom with the on-screen **Zoom in/out / Fit-to-screen buttons by `@ref`**
 (snapshot → grep `zoom|fit` → click) — they step predictably and never overshoot.
+Re-grep the ref immediately before each click; Miro renumbers them. (Alternative:
+`find role button click --name "Zoom in"` re-resolves each call so it can't go
+stale — mechanism verified, Miro's button names not; check a `snapshot` first.)
 
 **Avoid the synthetic ctrl+wheel event** (`WheelEvent` with `ctrlKey:true`): it
 jumps ~1.5×/tick and overshoots to 1000-2000% in a couple of ticks, dropping you
@@ -195,7 +222,19 @@ leftovers, then verify the count is 0). Never `pkill` Chrome before the daemon �
 the daemon relaunches it and you end up worse off.
 
 **Prevent:** one session, one command at a time, no parallel Bash calls; keep every
-Bash call well under the tool timeout; close the board before you write up.
+Bash call well under the tool timeout; close the board before you write up. **And
+launch with `AGENT_BROWSER_IDLE_TIMEOUT_MS=600000`** (SKILL.md §1): the daemon then
+shuts itself and its Chrome down after 10 minutes with no agent-browser commands —
+verified to take the browser processes to 0, and it fires on *CLI* inactivity even
+while the page renders flat-out. That is the only measure that also covers Cause 1,
+since a run killed before it reaches the cleanup block can't clean up after itself.
+It is not a licence to leave the board open: 10 idle minutes is still ~10 core-
+minutes.
+
+`agent-browser --session miro session info --json` gives this session's `active`
+flag and daemon `pid` directly — useful for confirming the daemon is really gone
+after cleanup. It still cannot see orphans, so the `ps` count above stays the
+authority.
 
 ## I) Misc
 - **Cold loads are slow — budget ~25s on macOS, 50-60s in a container; allow ~90s

@@ -72,6 +72,10 @@ Rules that follow from it, on every platform:
   ```bash
   ps -Ao pid,command | grep "[a]gent-browser/browsers/chrome" | grep -v -- "--type=" | wc -l   # expect 0
   ```
+  `agent-browser --session miro session info --json` reports this session's
+  `active`, daemon `pid` and `version` as structured data — handy, but **it is not
+  a substitute for the `ps` count**: it only knows about daemons it can still talk
+  to, and the browsers that actually hurt you are the orphans it can't see (§5).
 - **`close` as soon as the reading is done.** Write the deliverable *afterwards*,
   from your notes and the saved PNGs — never hold the board open "in case".
 - **Parking it costs more than a reload.** A cold re-open is ~25s (mac) / ~55s
@@ -135,6 +139,7 @@ no error tells you why.
 ps -Ao pid,command | grep "[a]gent-browser/browsers/chrome" | grep -v -- "--type=" | wc -l  # must be 0 — if not, Cleanup (§5) first
 export AGENT_BROWSER_USER_AGENT="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
 export AGENT_BROWSER_ARGS="--disable-blink-features=AutomationControlled"   # Linux container: add ",--no-sandbox" if Chrome won't start
+export AGENT_BROWSER_IDLE_TIMEOUT_MS=600000   # dead-man's switch — see below
 mkdir -p ./miro-shots
 agent-browser --session miro set viewport 1600 1000
 timeout 25 agent-browser --session miro open "<board-url>" >/dev/null 2>&1   # 'open' always times out — NORMAL, ignore it
@@ -144,6 +149,33 @@ agent-browser --session miro eval 'navigator.userAgent' | grep -q Headless \
 
 (The Mac UA string works from Linux too — it's what you're claiming to be, not
 what you're running on. Don't swap it for a Linux UA.)
+
+**Spoof the UA with the env var, never the `--user-agent` flag.** They are not
+interchangeable, and the difference is silent (verified on 0.33.0):
+
+| | `open <url>` | `open` with **no URL** (launch-only) |
+|---|---|---|
+| `AGENT_BROWSER_USER_AGENT` env | applies | **applies** |
+| `--user-agent` flag | applies | **silently ignored** |
+
+The launch-only `open` — new in recent versions, advertised for "staging state
+before the first navigation" — is exactly what an agent reading `--help` reaches
+for, and on that path the flag is dropped without a warning. You get a
+`HeadlessChrome` UA, Miro hangs on the splash forever, and nothing tells you why.
+The env var covers both paths, so use it and keep the verify line above.
+
+`AGENT_BROWSER_IDLE_TIMEOUT_MS` is a **dead-man's switch for the leaked-browser
+failure in §5**: the daemon shuts itself down — and takes Chrome with it (verified
+3 → 0 processes) — after that many ms with **no agent-browser commands**. It is
+CLI inactivity, not page inactivity: a board rendering flat-out is still reaped,
+which is the point. Ten minutes is long enough not to fire mid-read and short
+enough that a crashed or abandoned run stops burning a core on its own. It is a
+launch-time setting, so it must be exported in this same call.
+
+If it *does* fire while you're still working, the board is simply gone — the next
+command finds no browser and `session info --json` reports `active:false`. That is
+the timeout, not a crash: re-run this launch block and the ready gate, one cold
+reload, and carry on. Cheaper than the orphan it prevents.
 
 **Call 2 — the ready gate. Poll in short calls, never one long one.** Ready = a
 full-size canvas EXISTS *and* Miro's accessibility overview has populated;
@@ -332,6 +364,12 @@ overshoots to 1000%+ in two or three ticks, dumping you in empty canvas**, after
 which you burn turns clawing back. To reset, open the zoom-% menu → **Fit to
 screen / Zoom to 100%**.
 
+If the re-grepping gets tedious, `find role button click --name "Zoom in"`
+re-resolves the element on every call and so can't go stale, and when the name is
+wrong it fails loudly listing the names it saw rather than misclicking. The
+mechanism is verified; **Miro's exact button names are not** — so confirm them in
+a `snapshot` first, and treat the ref flow above as the known-good path.
+
 **Know your zoom before you shoot — cheaply.** The current zoom % lives in the DOM
 (bottom-right). Read it with text (≈free) instead of spending a screenshot to
 discover you're at 2000%:
@@ -440,7 +478,13 @@ ps -Ao pid,command | grep "[a]gent-browser/browsers/chrome" | grep -v -- "--type
 Four details that matter:
 - **Order: daemons first, browsers second.** Kill Chrome while its daemon is alive
   and the daemon relaunches it — you end up with a *new* browser plus an orphan.
-  `~/.agent-browser/<session>.pid` holds that session's daemon pid (verified).
+  `~/.agent-browser/<session>.pid` holds that session's daemon pid (verified —
+  `session info --json` reports the same number in `.pid`, which is the way to get
+  it if the pid file is missing).
+- **Prevention beats cleanup: launch with `AGENT_BROWSER_IDLE_TIMEOUT_MS` set**
+  (§1). The daemon then reaps itself *and its Chrome* after an idle stretch, which
+  is the one thing that also covers the case this section exists for — a run that
+  dies before it reaches this block.
 - **Don't reach for `pkill -f "bin/[a]gent-browser-"` unless you mean it** — it
   kills *every* agent-browser daemon on the machine, including sessions belonging
   to other work. Use it only when the orphan sweep leaves something you can't
@@ -477,3 +521,10 @@ If the count isn't 0, don't leave it — repeat the block, then report what's le
 |------|--------------|
 | [references/extraction-playbook.md](references/extraction-playbook.md) | Full explore→read→summarize method: comments/frames panels, board search, panning, reading mockups, dev-handoff format |
 | [references/troubleshooting.md](references/troubleshooting.md) | Stuck on splash, blank/skeleton screenshots, bot detection, blocked CDN, private boards, why keyboard zoom fails, the downscaled-coordinate trap, leaked browsers / machine slowdown / container OOM |
+
+For base `agent-browser` usage that isn't Miro-specific (refs, selectors, tabs,
+waiting), run `agent-browser skills get core` — it ships with the CLI, so it is
+always version-matched. **Where it and this skill disagree about Miro, this skill
+wins:** the canvas, the splash, the ready gate and the cost model are Miro
+quirks the generic guide doesn't know about. Verified against **agent-browser
+0.33.0**; re-check the launch flags in §1 after a CLI upgrade.
