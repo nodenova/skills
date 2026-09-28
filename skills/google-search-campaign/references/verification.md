@@ -12,7 +12,7 @@ The governing rule: **open the entity and read its own fields.** Summary rows, g
 
 The ads table shows a **display URL**: the Final URL's domain plus Path 1 and Path 2. Path 1/2 are free text, capped at 15 characters each, and have no connection to where the click goes.
 
-An ads table reading `site.com/authority-gap/assessment` is entirely compatible with a Final URL of `https://site.com/products/remit`.
+An ads table reading `site.com/<campaign-slug>/<landing-page>` is entirely compatible with a Final URL of `https://site.com/products/<product>`.
 
 - **To read the destination:** hover the ad row → pencil → **Final URL** field. The edit button's accessibility label also carries `finalUrls: …`, which is a fast read via `find`.
 - **To check the display path is honest:** Google requires the display URL to represent the landing page. A path pointing at a route that doesn't exist is a policy risk and should be corrected — but it is an ad-copy edit, so confirm before changing, and expect both ads to re-enter review.
