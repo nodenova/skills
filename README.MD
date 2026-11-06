@@ -13,6 +13,10 @@ A skill is a folder with a `SKILL.md`. The frontmatter `description` tells the a
 | [`google-search-campaign`](skills/google-search-campaign) | Builds, launches, audits and verifies a Google Ads Search campaign from a spreadsheet of headlines, descriptions, keywords and negatives. Checks demand exists before building, validates assets against Google's limits with a script (not by eye), wires conversion tracking end to end, and drives the Ads UI without tripping its defaults. Nothing goes live without explicit approval. |
 | [`meta-leads-campaign-setup`](skills/meta-leads-campaign-setup) | Sets up a Meta (Facebook/Instagram) Leads campaign that sends traffic to a lead magnet on your own site: Pixel + Conversions API tracking with a shared `eventID`, the Events Manager traps (Test Events, URL rules, lag), account prerequisites, and the Ads Manager build via Claude-in-Chrome with Meta's AI enhancements switched off. Leaves the campaign as a draft; never publishes. |
 | [`tender-portal-bidding`](skills/tender-portal-bidding) | Registers on public-sector e-procurement portals and works through selection questionnaires. Gets through the registration wall first, reads the bid pack before any bid/no-bid call, checks the deliverable's real shape against the notice, and never guesses on a warranted form. |
+| [`docx`](skills/docx) | Reads, edits and creates Word documents in NodeNova Desk: edits only the XML that changes (find and replace across split runs, tracked changes, comments, accepting changes), checks every edit against the ECMA-376 schemas and the package wiring, creates new documents with pandoc and a firm template, and checks each result by text diff and a rendered page. |
+| [`xlsx`](skills/xlsx) | Reads, edits and creates Excel workbooks in NodeNova Desk: cell-level XML edits, a recalculation check that catches stale formula results and errors, and a stdlib workbook builder (sheets, bold header, number formats, formulas). |
+| [`pptx`](skills/pptx) | Reads, edits and creates PowerPoint decks in NodeNova Desk: slide outline in show order, text and notes edits, reorder/delete/duplicate slides, new decks from Markdown with the firm template, and a look at every changed slide. |
+| [`pdf`](skills/pdf) | Works with PDFs in NodeNova Desk: text and tables, OCR for scans, merge/split/rotate, passwords, form filling, stamps and letterheads, and making PDFs from documents. |
 
 ## Install
 
@@ -58,8 +62,33 @@ Some skills depend on external tools — `miro-board-explorer` needs the `agent-
 skills/
   <skill-name>/
     SKILL.md            # frontmatter (name, description, allowed-tools) + the method
-    references/         # deeper docs, templates and scripts the skill loads only when needed
+    scripts/            # code the skill runs (the agent runs it, never retypes it)
+    references/         # deeper docs the skill loads only when needed
+shared/
+  ooxml.py              # one source for the Office XML helper; copied into docx, xlsx, pptx
+tools/
+  sync-shared.sh        # copy shared/ into the skills; --check fails if a copy drifted
+tests/
+  desk/                 # acceptance test inside NodeNova Desk's agent image (run.sh)
 ```
+
+Each skill folder works on its own (skills are pinned and installed one by one), so `ooxml.py` is copied into each office skill rather than linked. Edit `shared/ooxml.py`, then run `tools/sync-shared.sh`.
+
+### Office skills and NodeNova Desk
+
+`docx`, `xlsx`, `pptx` and `pdf` are written for NodeNova Desk's agent and its dev image (`ghcr.io/nodenova/desk-agent`, `nodenova/runtime/Dockerfile` in the desk repo), which bakes them in at `/opt/nodenova/skills`. They rely on:
+
+- `skill_read` ending with `[Skill directory: <path>]`, so the agent finds `scripts/` and `references/` (desk D49);
+- LibreOffice, pandoc, poppler, qpdf, pdftk, tesseract, Python 3 with `lxml` and `defusedxml`;
+- the ECMA-376 transitional and packaging schemas plus W3C `xml.xsd` at `$NN_OOXML_SCHEMAS` (default `/opt/nodenova/ooxml-schemas`). The image downloads them from Ecma at build time; they are not copied into this repo. Without lxml or the schemas, `ooxml.py` still checks well-formedness and package wiring and says the schema check was skipped.
+
+Finished files reach the user's folder through Desk's `save` tool, which runs its own Office package check (desk D51); the skills fall back to `cp` on older builds without it.
+
+The image builds the skills from the commit pinned in the desk repo's `nodenova/runtime/skills.json`, and the desktop app from the commit the shipped agent version pins (`skills` in its `agent.json`); update those hashes to ship a change.
+
+### Test on Desk
+
+`tests/desk/run.sh [image]` runs the acceptance test inside Desk's agent image (default `nn-desk-agent:dev`, built from the desk repo with this checkout as its `skills` build context). It drives the image's own tool server the way the agent does, `skill_list`, `skill_read`, `read`, `shell` (sandboxed, offline) and `save`, and works through every skill on files written by pandoc and LibreOffice: edits across split runs, tracked changes and comments, accepting changes, cell edits with recalculation, new workbooks, slide edits and duplication, merging, forms, OCR, and broken files that the skills' `pack` and Desk's `save` must both refuse. It checks results (text, values, pages, parts changed), not only exit codes. The image is Debian 13 with Node.js 26 LTS, Python 3.14 (lxml 6.1), LibreOffice 25.2, pandoc 3.1 and tesseract 5.5.
 
 Keeping detail in `references/` and out of `SKILL.md` is deliberate: the body stays short so it's cheap to keep in context, and the agent reads a reference file only when the task calls for it.
 
