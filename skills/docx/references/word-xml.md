@@ -1,5 +1,48 @@
 # Writing Word XML
 
+Use this only for what `docx_format.py` and `docx_replace_text.py` cannot do:
+new paragraphs, table rows, pictures, tracked changes, comments.
+
+## Steps
+
+Each step is its own shell call, so each starts with the same line
+(`S` is the skill directory, printed at the end of SKILL.md):
+
+```sh
+S=<skill directory>; W="$TMPDIR/job1"; mkdir -p "$W"
+python3 "$S/scripts/ooxml.py" unpack "/abs/path/file.docx" "$W/x"
+python3 "$S/scripts/docx_find.py" "$W/x" "late payment" --xml      # exact XML of the paragraph
+```
+
+Replace OLD with NEW in one part. OLD must be copied exactly from the
+`--xml` output and must occur once (`--all` changes every occurrence). If it
+is not found, the error shows the closest text and the first difference. With
+quotes of both kinds, or long XML, write OLD and NEW to files with a quoted
+heredoc and pass `"@$W/old.txt" "@$W/new.txt"`:
+
+```sh
+S=<skill directory>; W="$TMPDIR/job1"
+cat > "$W/old.txt" <<'EOF'
+<w:t>within 30 days</w:t>
+EOF
+cat > "$W/new.txt" <<'EOF'
+<w:t>within 14 days</w:t>
+EOF
+python3 "$S/scripts/ooxml.py" replace "$W/x/word/document.xml" "@$W/old.txt" "@$W/new.txt"
+python3 "$S/scripts/ooxml.py" pack "/abs/path/file.docx" "$W/x" "$W/out.docx"
+```
+
+`replace` takes an unpacked XML part (a file inside `$W/x`), never the .docx.
+For a larger edit, write a Python script file in `$W` with a quoted heredoc
+and run it on the part; do not use `python3 -c`.
+
+`pack` copies every untouched part from the original and checks the parts you
+changed: well-formed XML, valid against the Office XML schema, relationships
+and content types in order. It reports only problems your change added. On a
+problem it writes nothing and says what is wrong: fix it and pack again.
+
+## Rules for the XML
+
 Rules for the XML you put into `word/document.xml` (and headers, footers,
 footnotes). `ooxml.py pack` rejects XML that breaks the schema; these rules
 keep you from getting there.

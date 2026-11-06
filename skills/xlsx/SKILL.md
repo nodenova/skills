@@ -10,18 +10,19 @@ is `xl/worksheets/sheetN.xml`, but N is not the tab order (the scripts map
 sheet names to parts). Shared text is in `xl/sharedStrings.xml`, formats in
 `xl/styles.xml`.
 
-**Skill folder.** This skill's scripts are in its `scripts/` folder, and its
-longer guides are in `references/`. The folder's full path is printed at the
-end of this text ("Skill directory"). Below, `S` is that path: start each
-shell command with `S=<skill directory>;`. Read a guide with `cat "$S/references/<name>"`.
+**Every shell call starts fresh.** Variables, `cd` and functions from an
+earlier call are gone. Start each command with
+`S=<skill directory>; W="$TMPDIR/job1"; mkdir -p "$W";` (`S` is the "Skill
+directory" printed at the end of this text) and use full paths. Never run
+`python3 -c "..."` with text from the file inside the quotes; write a script
+file with a quoted heredoc and run that. Guides are in `$S/references/`.
 
 ## Rules
 
-1. **Never save a user's workbook through LibreOffice.** It rebuilds the whole
-   file and loses formatting, names and macros. Use it only to read, to check,
-   or to make a new file. To change a .xlsx, edit only the XML that needs it.
-2. **Work in `$TMPDIR`.** Unpacked parts and drafts go there, never in the
-   user's folder. `read` opens files there by full path.
+1. **Never save a user's workbook through LibreOffice or openpyxl.** They
+   rebuild the whole file and lose formatting, names and macros; use them only
+   to read, check, or make a new file. Edit a .xlsx with the scripts below.
+2. **Work in `$TMPDIR`**, never in the user's folder.
 3. **Stored results go stale.** A .xlsx keeps each formula's last result. After
    you change an input, those results are old (LibreOffice shows the old ones
    too) until the workbook recalculates. Always run `xlsx_check.py` to see
@@ -55,52 +56,28 @@ then `pdftoppm -png -r 80 -f 1 -l 1 "$TMPDIR/<name>.pdf" "$TMPDIR/page"` and
 
 ## Edit
 
+To change cells, use `xlsx_set.py`. You never write XML, and it keeps each
+cell's format, adds missing rows and cells in order, updates the sheet's
+dimension and turns on recalculation when the file opens:
+
 ```sh
 S=<skill directory>; W="$TMPDIR/job1"; mkdir -p "$W"
-python3 "$S/scripts/ooxml.py" unpack "/abs/path/book.xlsx" "$W/x"
-python3 "$S/scripts/xlsx_dump.py" "/abs/path/book.xlsx" > "$W/before.txt"
-python3 "$S/scripts/xlsx_dump.py" "/abs/path/book.xlsx" "Budget" B5 D12
+python3 "$S/scripts/xlsx_dump.py" "/abs/path/book.xlsx" > "$W/before.txt"; head -100 "$W/before.txt"
+python3 "$S/scripts/xlsx_set.py" "/abs/path/book.xlsx" "$W/out.xlsx" "Budget" B5 1250.5 A9 "Paid in full" D12 "=SUM(D2:D11)"
 ```
 
-The last line prints the sheet's part (e.g. `xl/worksheets/sheet2.xml`) and
-the exact XML of each cell, or of its row when the cell does not exist yet.
-Sheet XML is often one long line; do not open it with `read`.
-
-Replace with OLD copied exactly; it changes the part only if OLD occurs once.
-Keep the cell's `s="..."` (its format):
-
-```sh
-python3 "$S/scripts/ooxml.py" replace "$W/x/xl/worksheets/sheet2.xml" \
-  '<c r="B5" s="3"><v>1200</v></c>' '<c r="B5" s="3"><v>1250.5</v></c>'
-```
-
-| Cell | XML |
-|---|---|
-| Number | `<c r="B5" s="3"><v>1250.5</v></c>` (no thousands separator, `.` for decimals) |
-| Text | `<c r="B5" s="3" t="inlineStr"><is><t>Paid in full</t></is></c>` |
-| Formula | `<c r="D12" s="4"><f>SUM(D2:D11)</f></c>` (no `=`, no `<v>`) |
-| True/false | `<c r="E2" t="b"><v>1</v></c>` |
-
-Before adding cells or rows, formulas across sheets, or removing a formula,
-read `cat "$S/references/cells.md"`.
-
-Then turn on recalculation when opened: find the tag with
-`grep -o '<calcPr[^>]*>' "$W/x/xl/workbook.xml"` and replace it with the same
-tag plus ` fullCalcOnLoad="1"` (e.g. `<calcPr calcId="191029" fullCalcOnLoad="1"/>`).
-If there is no `<calcPr>`, insert `<calcPr fullCalcOnLoad="1"/>` right after
-`</definedNames>`, or after `</sheets>` when there are no defined names.
-
-Pack:
-
-```sh
-python3 "$S/scripts/ooxml.py" pack "/abs/path/book.xlsx" "$W/x" "$W/out.xlsx"
-```
-
-`pack` copies every untouched part from the original and checks the parts you
-changed: well-formed XML, valid against the Office XML schema, relationships
-and content types in order. It reports only problems your change added. On a
-problem it writes nothing: fix it and pack again. "changed:" must list only
-the parts you meant to touch. A .xlsm keeps its macros; keep the name.
+- `xlsx_set.py IN OUT SHEET CELL VALUE [CELL VALUE ...]`. VALUE: a number,
+  TRUE/FALSE, a formula starting with `=` (English names, `,` between
+  arguments), text, or `""` to empty the cell. `--text` keeps every VALUE as
+  text (codes like 0012). Dates are day numbers.
+- It writes OUT through the checked pack ("changed:" must list only the sheet
+  part and `xl/workbook.xml`). Errors are one line, `ERROR: ...`; fix the
+  command, do not fall back to `python3 -c`.
+- It refuses cells inside a shared or array formula. For those, other styles,
+  tables, or removing many formulas, edit the XML by hand:
+  `cat "$S/references/cells.md"`.
+- A second edit starts from the first result: IN `"$W/out.xlsx"`, OUT `"$W/out2.xlsx"`.
+  A .xlsm keeps its macros; keep the extension.
 
 ## Create
 
@@ -108,6 +85,7 @@ Write a JSON spec and build the workbook; the spec format is in
 `cat "$S/references/new-workbook.md"`:
 
 ```sh
+S=<skill directory>; W="$TMPDIR/job1"; mkdir -p "$W"
 python3 "$S/scripts/xlsx_new.py" "$W/spec.json" "$W/out.xlsx"
 ```
 
@@ -118,20 +96,22 @@ when that matters).
 ## Convert
 
 ```sh
+W="$TMPDIR/job1"; mkdir -p "$W"
 soffice --headless --convert-to pdf --outdir "$W" "/abs/path/book.xlsx"   # every sheet -> PDF
 soffice --headless --convert-to xlsx --outdir "$W" "/abs/path/book.xls"   # old .xls -> new .xlsx copy
 ```
 
 ## Check
 
-1. `pack` passed (for a new file: `python3 "$S/scripts/ooxml.py" validate "$W/out.xlsx"`).
-2. Real results, no errors: `python3 "$S/scripts/xlsx_check.py" "$W/out.xlsx"`.
+1. The script said "checks passed" (for a new file: `python3 "$S/scripts/ooxml.py" validate "$W/out.xlsx"`).
+2. Real results, no errors: `S=<skill directory>; W="$TMPDIR/job1"; python3 "$S/scripts/xlsx_check.py" "$W/out.xlsx"`.
    It recalculates a scratch copy and lists every formula with its fresh
    result, then the errors (`#REF!`, `#DIV/0!`, `#NAME?`, `#VALUE!`, `#N/A`,
    `Err:5xx`). Fix every error you caused; check the totals the user cares
    about. Errors that were already there: mention them, do not fix unasked.
 3. Only the intended cells changed:
    `python3 "$S/scripts/xlsx_dump.py" "$W/out.xlsx" > "$W/after.txt"; diff "$W/before.txt" "$W/after.txt"`
+   (make `before.txt` from the original first, as in "Edit")
    (stored formula results still show the old numbers here; step 2 has the new ones).
 
 ## Save

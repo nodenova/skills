@@ -1,5 +1,8 @@
 # Reorder, delete and duplicate slides
 
+Each shell call starts fresh: begin each with `S=<skill directory>; W="$TMPDIR/job1";`
+and work in the unpacked folder `$W/x` (unpack it as in `xml-edit.md`).
+
 All three change `<p:sldIdLst>` in `ppt/presentation.xml`. See it with:
 
 ```sh
@@ -31,7 +34,7 @@ To copy slide part `slide2.xml` as a new `slide9.xml` (use a number not yet in
 ```sh
 cd "$W/x"
 cp ppt/slides/slide2.xml ppt/slides/slide9.xml
-python3 -c "import re; s = open('ppt/slides/_rels/slide2.xml.rels').read(); open('ppt/slides/_rels/slide9.xml.rels', 'w').write(re.sub(r'<Relationship [^>]*notesSlide[^>]*/>', '', s))"
+sed 's#<Relationship [^>]*notesSlide[^>]*/>##g' ppt/slides/_rels/slide2.xml.rels > ppt/slides/_rels/slide9.xml.rels
 python3 "$S/scripts/ooxml.py" replace "[Content_Types].xml" '</Types>' \
   '<Override PartName="/ppt/slides/slide9.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/></Types>'
 python3 "$S/scripts/ooxml.py" replace ppt/_rels/presentation.xml.rels '</Relationships>' \

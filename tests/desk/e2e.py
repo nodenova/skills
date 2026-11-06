@@ -56,7 +56,7 @@ TMP = sh('echo "$TMPDIR"')[0].splitlines()[0].strip()
 # ---------------------------------------------------------------- the skills
 listed = tool('skill_list')
 check('skill_list offers docx, xlsx, pptx, pdf', all(re.search(rf'^{n} — ', listed, re.M) for n in ['docx', 'xlsx', 'pptx', 'pdf']), listed)
-for name in ['docx', 'xlsx', 'pptx']:
+for name in ['docx', 'xlsx', 'pptx', 'pdf']:
     body = tool('skill_read', name=name)
     check(f'skill_read {name} names its folder', f'[Skill directory: /opt/nodenova/skills/{name}]' in body, body[-300:])
 ref = tool('read', path='/opt/nodenova/skills/docx/references/tracked-changes-and-comments.md', limit=1)
@@ -115,6 +115,18 @@ check('pandoc sees the edit, the redline and the comment', 'within 14 days' in o
 out, code = sh(D + 'soffice --headless --convert-to pdf --outdir "$W" "$W/out.docx" >/dev/null 2>&1 && pdftotext "$W/out.pdf" - && pdftoppm -png -r 60 -f 1 -l 1 "$W/out.pdf" "$W/page" && ls "$W"/page-1.png')
 check('the edited docx opens and renders', code == 0 and 'within 14 days' in out, out)
 
+# Edit 3: the high-level commands, which is what the model should reach for first.
+out, code = sh(D + '''python3 "$S/scripts/docx_find.py" /work/contract.docx "within 30" | grep -c "^--- paragraph" &&
+python3 "$S/scripts/docx_find.py" "$W/x" "late payment" | grep -c "^--- paragraph" &&
+python3 "$S/scripts/docx_find.py" "$W/x/word/document.xml" "Terms" | grep -c "^--- paragraph"''')
+check('docx_find accepts a .docx, an unpacked folder and a part file', code == 0 and out.split() == ['1', '1', '1'], out)
+out, code = sh(D + '''python3 "$S/scripts/docx_format.py" /work/contract.docx "$W/fmt.docx" --paragraph-containing "Terms" --color FF0000 --bold &&
+python3 "$S/scripts/docx_replace_text.py" "$W/fmt.docx" "$W/fmt2.docx" "within 30 days of the invoice" "within 7 days of receipt" &&
+pandoc -t plain "$W/fmt2.docx" && unzip -p "$W/fmt2.docx" word/document.xml | grep -o '<w:color w:val="FF0000"/>' | head -1''')
+check('docx_format and docx_replace_text edit by words and pass the pack checks', code == 0 and out.count('checks passed') == 2 and 'within 7 days of receipt' in out and '<w:color w:val="FF0000"/>' in out and 'changed: word/document.xml |' in out, out)
+out, code = sh(D + '''python3 "$S/scripts/ooxml.py" replace /work/contract.docx '<w:t>x</w:t>' '<w:t>y</w:t>'; python3 "$S/scripts/docx_replace_text.py" /work/contract.docx "$W/no.docx" "within 31 days" "x"; python3 "$S/scripts/docx_find.py" "$W/none" "x"''')
+check('wrong input gives one-line ERROR messages, no traceback, and a near-miss', 'Traceback' not in out and 'ooxml.py unpack FILE DIR' in out and 'Similar: paragraph' in out and out.count('ERROR:') == 3, out)
+
 # A broken edit is stopped by the skill's pack ...
 out, code = sh(D + '''cp -r "$W/x" "$W/bad" && python3 "$S/scripts/ooxml.py" replace "$W/bad/word/document.xml" '<w:body>' '<w:body><w:bogus/>' && python3 "$S/scripts/ooxml.py" pack /work/contract.docx "$W/bad" "$W/bad.docx"; test -e "$W/bad.docx" && echo WRITTEN || echo NOT_WRITTEN''')
 check('pack refuses a schema-invalid edit and writes nothing', 'NOT_WRITTEN' in out and "Element 'bogus'" in out, out)
@@ -170,6 +182,8 @@ check('cell edits pack cleanly and recalculate (Total 42, Check big)', 'checks p
 check('only the edited cells changed', '> B2\t20' in out and '> A3\tNotepads' in out and '> C2' not in out, out)
 out = tool('save', **{'from': scratch('xlsx/out.xlsx'), 'path': '/work/budget.xlsx'})
 check('save replaces the workbook: sheet and workbook parts changed', re.match(r'Replaced (/work/)?budget\.xlsx ', out) and 'xl/worksheets/sheet1.xml' in out and 'xl/workbook.xml' in out, out)
+out, code = sh(X + '''python3 "$S/scripts/xlsx_set.py" /work/budget.xlsx "$W/set.xlsx" Budget B3 5 A5 "Ink & pens" D5 "=B3*C3" && python3 "$S/scripts/xlsx_check.py" "$W/set.xlsx"; python3 "$S/scripts/xlsx_set.py" /work/budget.xlsx "$W/no.xlsx" Nope A1 1''')
+check('xlsx_set edits cells and adds a row without XML; totals recalculate', 'checks passed' in out and '=SUM(D2:D3)\t-> 45' in out and '=B3*C3\t-> 15' in out and '0 formula error' in out and 'no sheet named "Nope"' in out and 'Traceback' not in out, out)
 out, code = sh(X + '''cp -r "$W/x" "$W/bad" && python3 "$S/scripts/ooxml.py" replace "$W/bad/xl/worksheets/sheet1.xml" '<sheetData>' '<sheetData><row r="99"><c r="A99"><f>1/0</f><v>1</v></c></row>' && python3 "$S/scripts/ooxml.py" pack /work/budget.xlsx "$W/bad" "$W/bad.xlsx" && python3 "$S/scripts/xlsx_check.py" "$W/bad.xlsx"''')
 check('xlsx_check reports a formula error the edit caused', '#DIV/0!' in out and '1 formula error' in out, out)
 
@@ -190,6 +204,8 @@ python3 "$S/scripts/ooxml.py" replace ppt/presentation.xml '</p:sldIdLst>' '<p:s
 cd / && python3 "$S/scripts/ooxml.py" pack /work/deck.pptx "$W/x" "$W/out.pptx" && python3 "$S/scripts/pptx_outline.py" "$W/out.pptx" > "$W/after.txt"; diff "$W/before.txt" "$W/after.txt";
 soffice --headless --convert-to pdf --outdir "$W" "$W/out.pptx" >/dev/null 2>&1 && pdfinfo "$W/out.pdf" | grep Pages''')
 check('edit text and duplicate a slide: pack passes, 4 slides render', 'checks passed' in out and 'Costs down 3%' in out and 'slide9.xml (id 900' in out and re.search(r'Pages:\s+4', out), out)
+out, code = sh(P + '''python3 "$S/scripts/pptx_replace_text.py" /work/deck.pptx "$W/rt.pptx" "Revenue up 12%" "Revenue up 15%" --slide 1 && python3 "$S/scripts/pptx_outline.py" "$W/rt.pptx"; python3 "$S/scripts/pptx_replace_text.py" /work/deck.pptx "$W/no.pptx" "Revenue up 13%" x''')
+check('pptx_replace_text edits slide text by words; a miss shows the closest text', 'checks passed' in out and 'Revenue up 15%' in out and 'notes: Mention the North region.' in out and 'Similar:' in out and 'Traceback' not in out, out)
 out = tool('save', **{'from': scratch('pptx/out.pptx'), 'path': '/work/deck.pptx'})
 check('save replaces the deck, listing the changed parts', re.match(r'Replaced (/work/)?deck\.pptx ', out) and 'ppt/slides/slide9.xml' in out, out)
 
@@ -199,6 +215,8 @@ out, code = sh(F + '''soffice --headless --convert-to pdf --outdir "$W" /work/co
 qpdf --empty --pages "$W/contract.pdf" "$W/deck.pdf" -- "$W/merged.pdf" && qpdf "$W/merged.pdf" --pages . 2-3 -- "$W/part.pdf" && qpdf "$W/part.pdf" --rotate=+90:1 "$W/rot.pdf" &&
 pdfinfo "$W/merged.pdf" | grep Pages; pdfinfo "$W/rot.pdf" | grep Pages; pdftotext -layout "$W/merged.pdf" - | grep -c "within 14 days"''')
 check('merge, extract and rotate pages (qpdf)', code == 0 and re.search(r'Pages:\s+5', out) and re.search(r'Pages:\s+2', out), out)
+out, code = sh(F + 'python3 /opt/nodenova/skills/pdf/scripts/pdf_find.py "$W/merged.pdf" "within 14 days"; python3 /opt/nodenova/skills/pdf/scripts/pdf_find.py "$W/merged.pdf" "no such phrase"')
+check('pdf_find lists the pages of a match and fails in one line on a miss', 'pages: 1' in out and 'ERROR:' in out and 'Traceback' not in out, out)
 out, code = sh(F + r'''python3 - "$W/form.pdf" <<'EOF'
 import sys
 objs = ["<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [4 0 R] /NeedAppearances true >> >>",

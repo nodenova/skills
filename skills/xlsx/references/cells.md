@@ -1,5 +1,45 @@
 # Cells, rows and formulas in sheet XML
 
+Use this when `xlsx_set.py` cannot do the edit. Each step is its own shell
+call, starting `S=<skill directory>; W="$TMPDIR/job1";`.
+
+## By hand: unpack, replace, recalculate, pack
+
+```sh
+S=<skill directory>; W="$TMPDIR/job1"; mkdir -p "$W"
+python3 "$S/scripts/ooxml.py" unpack "/abs/path/book.xlsx" "$W/x"
+python3 "$S/scripts/xlsx_dump.py" "/abs/path/book.xlsx" "Budget" B5 D12
+```
+
+The last line prints the sheet's part (e.g. `xl/worksheets/sheet2.xml`) and
+the exact XML of each cell, or of its row when the cell does not exist yet.
+Replace with OLD copied exactly; it changes the part only if OLD occurs once
+(on a miss the error shows the closest text). Keep the cell's `s="..."`. With
+quotes of both kinds, put OLD and NEW in files with a quoted heredoc and pass
+`"@$W/old.txt" "@$W/new.txt"`:
+
+```sh
+S=<skill directory>; W="$TMPDIR/job1"
+python3 "$S/scripts/ooxml.py" replace "$W/x/xl/worksheets/sheet2.xml" \
+  '<c r="B5" s="3"><v>1200</v></c>' '<c r="B5" s="3"><v>1250.5</v></c>'
+```
+
+| Cell | XML |
+|---|---|
+| Number | `<c r="B5" s="3"><v>1250.5</v></c>` (no thousands separator, `.` for decimals) |
+| Text | `<c r="B5" s="3" t="inlineStr"><is><t>Paid in full</t></is></c>` |
+| Formula | `<c r="D12" s="4"><f>SUM(D2:D11)</f></c>` (no `=`, no `<v>`) |
+| True/false | `<c r="E2" t="b"><v>1</v></c>` |
+
+Then turn on recalculation when opened: find the tag with
+`grep -o '<calcPr[^>]*>' "$W/x/xl/workbook.xml"` and replace it with the same
+tag plus ` fullCalcOnLoad="1"` (e.g. `<calcPr calcId="191029" fullCalcOnLoad="1"/>`).
+If there is no `<calcPr>`, insert `<calcPr fullCalcOnLoad="1"/>` right after
+`</definedNames>`, or after `</sheets>` when there are no defined names. Then
+`python3 "$S/scripts/ooxml.py" pack "/abs/path/book.xlsx" "$W/x" "$W/out.xlsx"`.
+
+## Cell types
+
 A sheet's data is `<sheetData>`: rows `<row r="5">`, and in each row cells
 `<c r="B5">`. A cell's type is its `t` attribute, its format its `s`
 attribute (an index into `cellXfs` in `xl/styles.xml`), its value `<v>`, its

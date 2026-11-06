@@ -10,19 +10,20 @@ order (`<p:sldIdLst>`); each slide is `ppt/slides/slideN.xml`, but N is not
 the show order. Text is in `<a:t>` inside shapes (`<p:sp>`) and tables
 (`<p:graphicFrame>`). Speaker notes are in `ppt/notesSlides/`.
 
-**Skill folder.** This skill's scripts are in its `scripts/` folder, and its
-longer guides are in `references/`. The folder's full path is printed at the
-end of this text ("Skill directory"). Below, `S` is that path: start each
-shell command with `S=<skill directory>;`. Read a guide with `cat "$S/references/<name>"`.
+**Every shell call starts fresh.** Variables, `cd` and functions from an
+earlier call are gone. Start each command with
+`S=<skill directory>; W="$TMPDIR/job1"; mkdir -p "$W";` (`S` is the "Skill
+directory" printed at the end of this text) and use full paths. Never run
+`python3 -c "..."` with slide text inside the quotes; write a script file
+with a quoted heredoc and run that. Guides are in `$S/references/`.
 
 ## Rules
 
-1. **Never save a user's deck through pandoc or LibreOffice.** Both rebuild
-   the whole file and lose animations, layouts and formatting. Use them only to
-   read, to check, or to make a new file. To change a .pptx, edit only the XML
-   that needs it.
-2. **Work in `$TMPDIR`.** Unpacked parts, drafts and slide images go there,
-   never in the user's folder. `read` opens files there by full path.
+1. **Never save a user's deck through pandoc, LibreOffice or python-pptx.**
+   They rebuild the whole file and lose animations, layouts and formatting;
+   use them only to read, check, or make a new file. Edit a .pptx with the
+   scripts below.
+2. **Work in `$TMPDIR`**, never in the user's folder.
 3. **Look at every slide you change.** Text that is valid XML can still
    overflow its box on the slide.
 4. **Change only what was asked**, and save only a file that passed the checks,
@@ -53,51 +54,24 @@ pdftoppm -png -r 50 -f 3 -l 3 "$TMPDIR/deck.pdf" "$TMPDIR/slide"   # slide 3; ls
 
 ```sh
 S=<skill directory>; W="$TMPDIR/job1"; mkdir -p "$W"
-python3 "$S/scripts/ooxml.py" unpack "/abs/path/deck.pptx" "$W/x"
 python3 "$S/scripts/pptx_outline.py" "/abs/path/deck.pptx" > "$W/before.txt"
-grep -o '.\{0,300\}Revenue grew.\{0,300\}' "$W/x/ppt/slides/slide2.xml"
+python3 "$S/scripts/pptx_replace_text.py" "/abs/path/deck.pptx" "$W/out.pptx" "Revenue grew 12%" "Revenue grew 15%" --slide 2
 ```
 
-Take the slide's part from the outline. Slide XML is often one long line; do
-not open it with `read`. A sentence is often split across runs (`<a:r>`, a
-piece of text with one format), like `<a:t>Revenue grew </a:t>` then
-`<a:t>12%</a:t>`: replace the runs that hold the phrase, putting the new text
-in the first run (keep its `<a:rPr>`).
+`pptx_replace_text.py IN OUT OLD NEW [--slide N] [--all] [--part PART]` finds
+text by its words, even when PowerPoint split it across runs (`<a:r>`), and
+changes only the XML needed; NEW takes the formatting of the run where OLD
+starts. OLD and NEW are plain text, no XML. N is the slide number from the
+outline; without `--slide` every slide is searched. OLD must occur once
+unless `--all`. Speaker notes: `--part ppt/notesSlides/notesSlide1.xml` (the
+notes part is in the slide's `.rels`). If OLD is not found, the error shows
+the closest text: copy from it, not from memory. Errors are one line,
+`ERROR: ...`; fix the command, do not fall back to `python3 -c`.
 
-```sh
-python3 "$S/scripts/ooxml.py" replace "$W/x/ppt/slides/slide2.xml" '<a:t>12%</a:t>' '<a:t>15%</a:t>'
-```
-
-It changes the part only if OLD occurs exactly once (`--all` for every
-occurrence on purpose). When OLD or NEW has quotes of both kinds, write them
-to files with a quoted heredoc and pass `"@$W/old.txt" "@$W/new.txt"`.
-
-- Escape `&` as `&amp;`, `<` as `&lt;`, `>` as `&gt;` in new text. Never put a
-  line break character in `<a:t>`.
-- A new bullet: copy the neighbouring `<a:p>...</a:p>` and change its text.
 - Keep new text about as long as the old. If it is much longer, shorten it or
   ask; do not shrink the font unasked.
-- Speaker notes: the slide's notes part is in its `.rels`
-  (`grep -o 'notesSlide[0-9]*.xml' "$W/x/ppt/slides/_rels/slide2.xml.rels"`);
-  edit its `<a:t>` the same way.
-- A picture: find its file in `ppt/slides/_rels/slideN.xml.rels`
-  (`../media/image3.png`) and overwrite it in `$W/x/ppt/media/` with an image
-  of the same type and shape, after checking no other slide uses it
-  (`grep -l image3.png "$W"/x/ppt/slides/_rels/*`).
-
-**Reorder, delete or duplicate slides:** `cat "$S/references/slides.md"`.
-
-## Pack
-
-```sh
-python3 "$S/scripts/ooxml.py" pack "/abs/path/deck.pptx" "$W/x" "$W/out.pptx"
-```
-
-`pack` copies every untouched part from the original and checks the parts you
-changed: well-formed XML, valid against the Office XML schema, relationships
-and content types in order. It reports only problems your change added. On a
-problem it writes nothing: fix it and pack again. "changed:" must list only
-the parts you meant to touch.
+- **Reorder, delete or duplicate slides:** `cat "$S/references/slides.md"`.
+  **Bullets, pictures and other XML-level edits:** `cat "$S/references/xml-edit.md"`.
 
 ## Create
 
@@ -105,6 +79,7 @@ Write the outline as Markdown and convert it; the Markdown format (slides,
 notes, columns, tables, images) is in `cat "$S/references/new-deck.md"`:
 
 ```sh
+S=<skill directory>; W="$TMPDIR/job1"; mkdir -p "$W"
 pandoc "$W/deck.md" --slide-level=2 --reference-doc="/abs/path/firm-template.pptx" -o "$W/out.pptx"
 ```
 
@@ -115,6 +90,7 @@ existing deck this way.
 ## Convert
 
 ```sh
+W="$TMPDIR/job1"; mkdir -p "$W"
 soffice --headless --convert-to pdf --outdir "$W" "/abs/path/deck.pptx"    # deck -> PDF
 pdftoppm -png -r 100 "$W/deck.pdf" "$W/slide"                               # PDF -> one PNG per slide
 soffice --headless --convert-to pptx --outdir "$W" "/abs/path/deck.ppt"    # old .ppt -> new .pptx copy
@@ -122,8 +98,9 @@ soffice --headless --convert-to pptx --outdir "$W" "/abs/path/deck.ppt"    # old
 
 ## Check
 
-1. `pack` passed (for a new file: `python3 "$S/scripts/ooxml.py" validate "$W/out.pptx"`).
-2. Only the intended text changed:
+1. The script said "checks passed" and "changed:" lists only the parts you
+   meant (for a new file: `python3 "$S/scripts/ooxml.py" validate "$W/out.pptx"`).
+2. Only the intended text changed (`before.txt` is made in "Edit text"):
    `python3 "$S/scripts/pptx_outline.py" "$W/out.pptx" > "$W/after.txt"; diff "$W/before.txt" "$W/after.txt"`
 3. The changed slides look right: render them (as in "Read") and look at each
    one. Text stays inside its box and does not cover other shapes. If

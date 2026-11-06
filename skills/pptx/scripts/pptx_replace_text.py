@@ -1,0 +1,67 @@
+"""pptx_replace_text.py IN.pptx OUT.pptx OLD NEW [--slide N] [--all] [--part PART]
+
+Replace text on slides by its words, even when PowerPoint split it across
+several runs. NEW takes the formatting of the run where OLD starts; nothing
+else changes. Searches every slide (or only slide N, numbered as in
+pptx_outline.py, or one --part such as ppt/notesSlides/notesSlide1.xml for
+speaker notes). OLD must occur once unless --all. OLD and NEW are plain text
+(no XML, no escaping); "@file" reads the text from that file instead. Matching
+is exact: if OLD is not found, the closest text is shown. OUT is written by the
+same checked pack as `ooxml.py pack`.
+"""
+import sys
+import zipfile
+
+import ooxml
+import pptx_outline
+
+
+def main():
+    args = sys.argv[1:]
+    every = '--all' in args
+    args = [a for a in args if a != '--all']
+    options = {}
+    for flag in ('--slide', '--part'):
+        if flag in args:
+            i = args.index(flag)
+            options[flag] = args[i + 1]
+            del args[i:i + 2]
+    if len(args) != 4:
+        sys.exit(__doc__)
+    src, out, old, new = args[0], args[1], ooxml.arg(args[2]), ooxml.arg(args[3])
+    ooxml.need_zip(src, 'IN')
+    ooxml.need_distinct(src, out)
+    with zipfile.ZipFile(src) as z:
+        slides = pptx_outline.slides_in_show_order(z)
+        if '--part' in options:
+            parts = [(options['--part'], options['--part'])]
+        elif '--slide' in options:
+            chosen = [s for s in slides if str(s[0]) == options['--slide']]
+            if not chosen:
+                sys.exit(f'ERROR: slide {options["--slide"]} does not exist; the deck has {len(slides)} slides.')
+            parts = [(f'slide {chosen[0][0]}', chosen[0][1])]
+        else:
+            parts = [(f'slide {s[0]}', s[1]) for s in slides]
+    xmls = {part: ooxml.read_part(src, part) for _, part in parts}
+    texts, labels = [], []
+    for label, part in parts:
+        for n, t in enumerate(ooxml.paragraph_texts(xmls[part], ooxml.PPTX), 1):
+            texts.append(t)
+            labels.append(f'{label}, paragraph {n}')
+    hits = [labels[i] for i, t in enumerate(texts) if old in t for _ in range(t.count(old))]
+    if not old:
+        sys.exit('ERROR: OLD text is empty.')
+    if not hits:
+        sys.exit(ooxml.no_text_match_message(texts, old, 'the deck' if len(parts) > 1 else parts[0][1], labels))
+    if len(hits) > 1 and not every:
+        sys.exit(f'ERROR: {old!r} occurs {len(hits)} times ({"; ".join(hits)}). Use --all, --slide N, or a longer OLD text that occurs once. Nothing changed.')
+    changes = {}
+    for label, part in parts:
+        if any(old in t for t in ooxml.paragraph_texts(xmls[part], ooxml.PPTX)):
+            changes[part] = ooxml.replace_text(xmls[part], ooxml.PPTX, old, new, True, part)[0].encode('utf-8')
+    print(f'replaced {len(hits)} in {", ".join(sorted(set(h.split(",")[0] for h in hits)))}')
+    ooxml.repack(src, out, changes)
+
+
+if __name__ == '__main__':
+    ooxml.cli(main)

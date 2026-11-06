@@ -7,6 +7,8 @@
   ooxml.py validate [ORIGINAL] FILE        check FILE; with ORIGINAL, report only new problems
 
 OLD/NEW starting with @ are read from that file (one final newline dropped).
+When OLD is not found, the closest text in the part is printed with the first
+difference. Every error is one line, "ERROR: ...", exit 1; add --debug for a traceback.
 
 Checks: every changed XML part is well formed and, with lxml and the ECMA-376
 schemas present, valid against its schema (after the markup-compatibility
@@ -22,8 +24,12 @@ import os
 import posixpath
 import re
 import sys
+import tempfile
 import zipfile
 from collections import Counter
+from difflib import SequenceMatcher
+from html import unescape
+from xml.sax.saxutils import escape
 
 try:
     from lxml import etree as LX
@@ -61,7 +67,28 @@ def arg(s):
     return t[:-1] if t.endswith('\n') else t
 
 
-def unpack(src, d):
+def need_zip(path, what):
+    if os.path.isdir(path):
+        sys.exit(f'ERROR: {what} is a folder ({path}); the original .docx/.xlsx/.pptx file is needed here.')
+    if not os.path.exists(path):
+        sys.exit(f'ERROR: {what} not found: {path}')
+    if not zipfile.is_zipfile(path):
+        sys.exit(f'ERROR: {what} is not a zip/Office file: {path}. (A password-protected file cannot be read here.)')
+
+
+def need_text_file(path, what):
+    if os.path.isdir(path):
+        sys.exit(f'ERROR: {what} is a folder ({path}); give the XML file inside it, for example {path}/word/document.xml')
+    if not os.path.exists(path):
+        sys.exit(f'ERROR: {what} not found: {path}. A path that starts with an unexpected "/" means a shell '
+                 'variable was empty: every shell call starts fresh, so set S and W again in the same command.')
+    if zipfile.is_zipfile(path):
+        sys.exit(f'ERROR: {what} must be an unpacked XML part, not a zip/Office file ({path}). '
+                 'Run `ooxml.py unpack FILE DIR` first, then use a file inside DIR, for example DIR/word/document.xml.')
+
+
+def unpack(src, d, quiet=False):
+    need_zip(src, 'FILE')
     with zipfile.ZipFile(src) as z:
         for n in z.namelist():
             if n.endswith('/') or '..' in n.split('/') or n.startswith('/'):
@@ -69,19 +96,92 @@ def unpack(src, d):
             os.makedirs(os.path.join(d, os.path.dirname(n)), exist_ok=True)
             with open(os.path.join(d, n), 'wb') as f:
                 f.write(z.read(n))
-        print('unpacked', len(z.namelist()), 'parts to', d)
+        if not quiet:
+            print('unpacked', len(z.namelist()), 'parts to', d)
+
+
+def closest(s, old):
+    size = 8 if len(old) < 40 else 12
+    if len(old) < size:
+        return None
+    votes, first = Counter(), {}
+    step = max(6, len(old) // 40)
+    for k in range(0, len(old) - size + 1, step):
+        chunk = old[k:k + size]
+        at = s.find(chunk)
+        for _ in range(20):
+            if at < 0:
+                break
+            votes[at - k] += 1
+            first.setdefault(at - k, k)
+            at = s.find(chunk, at + 1)
+    if not votes:
+        return None
+    likely = [v for v in votes if votes[v] >= 2] or list(votes)
+    start = max(0, min(likely, key=lambda v: first[v]))
+    return start, s[start:start + len(old) + len(old) // 5 + 10]
+
+
+def first_difference(window, old):
+    for tag, i1, i2, j1, j2 in SequenceMatcher(None, window, old, autojunk=False).get_opcodes():
+        if tag != 'equal':
+            around = window[max(0, i1 - 30):i2 + 30]
+            return f'the part has {window[i1:i2]!r} where OLD has {old[j1:j2]!r}, in ...{around}...'
+    return None
+
+
+def not_found_message(part, s, old):
+    lines = [f'ERROR: OLD not found in {part}. Nothing changed.']
+    near = closest(s, old)
+    if near is None:
+        lines.append('No similar text in the part. Check that this is the right part and copy OLD from the tool output, not from memory.')
+    else:
+        window = near[1][:len(old) + 10]
+        lines.append('Closest text in the part:')
+        lines.append('  ' + (window if len(window) <= 600 else window[:600] + ' ...'))
+        diff = first_difference(near[1], old)
+        if diff:
+            lines.append('First difference: ' + diff[:700])
+    return '\n'.join(lines)
 
 
 def replace(part, old, new, every):
-    s = open(part, encoding='utf-8').read()
+    need_text_file(part, 'PART')
+    if not old:
+        sys.exit('ERROR: OLD is empty.')
+    s = open(part, encoding='utf-8', newline='').read()
     n = s.count(old)
-    if n == 0 or (n > 1 and not every):
-        sys.exit(f'ERROR: found {n} times in {part}; need exactly 1 (or --all). Nothing changed.')
-    open(part, 'w', encoding='utf-8').write(s.replace(old, new))
+    if n == 0:
+        sys.exit(not_found_message(part, s, old))
+    if n > 1 and not every:
+        sys.exit(f'ERROR: OLD occurs {n} times in {part}; need exactly 1. Add surrounding XML to OLD so it is unique, or use --all. Nothing changed.')
+    open(part, 'w', encoding='utf-8', newline='').write(s.replace(old, new))
     print(f'replaced {n} in {part}')
 
 
+def need_distinct(src, out):
+    if os.path.abspath(src) == os.path.abspath(out):
+        sys.exit('ERROR: OUT must be a different file from IN.')
+
+
+def repack(src, out, changes):
+    need_zip(src, 'IN')
+    need_distinct(src, out)
+    with tempfile.TemporaryDirectory(dir=os.environ.get('TMPDIR') or None) as d:
+        unpack(src, d, quiet=True)
+        for name, data in changes.items():
+            if data is None:
+                os.remove(os.path.join(d, name))
+                continue
+            with open(os.path.join(d, name), 'wb') as f:
+                f.write(data)
+        pack(src, d, out)
+
+
 def pack(src, d, out):
+    need_zip(src, 'ORIGINAL')
+    if not os.path.isdir(d):
+        sys.exit(f'ERROR: DIR must be the unpacked folder (made by `ooxml.py unpack`): {d}')
     zin = zipfile.ZipFile(src)
     names = [n for n in zin.namelist() if not n.endswith('/')]
     folders = {n for n in zin.namelist() if n.endswith('/')}
@@ -323,6 +423,7 @@ def check(path, original=None):
 
 def validate(args):
     original, path = (args[0], args[1]) if len(args) == 2 else (None, args[0])
+    need_zip(path, 'FILE')
     problems, notes = check(path, original)
     for note in notes:
         print('note:', note)
@@ -333,7 +434,191 @@ def validate(args):
     print(f'{path}: checks passed' + (' (no new problems)' if original else ''))
 
 
-if __name__ == '__main__':
+# ---------- text across runs (docx w:, pptx a:) ----------
+
+def read_part(src, part):
+    if os.path.isdir(src):
+        path = os.path.join(src, part)
+        if not os.path.isfile(path):
+            sys.exit(f'ERROR: {path} not found (folder {src} has no part {part}).')
+        return open(path, encoding='utf-8').read()
+    if not os.path.exists(src):
+        sys.exit(f'ERROR: not found: {src}. A path that starts with an unexpected "/" means a shell '
+                 'variable was empty: every shell call starts fresh, so set S and W again in the same command.')
+    if zipfile.is_zipfile(src):
+        with zipfile.ZipFile(src) as z:
+            if part not in z.namelist():
+                xml_parts = [n for n in z.namelist() if re.match(r'(word|xl|ppt)/[^/]+\.xml$', n)]
+                sys.exit(f'ERROR: {src} has no part {part}. Parts: {", ".join(xml_parts)}')
+            return z.read(part).decode('utf-8')
+    return open(src, encoding='utf-8').read()
+
+
+DOCX = ('w:p', 'w:r', 'w:t')
+PPTX = ('a:p', 'a:r', 'a:t')
+LOOSE = str.maketrans({'\u2018': "'", '\u2019': "'", '\u201c': '"', '\u201d': '"',
+                       '\u2013': '-', '\u2014': '-', '\u00a0': ' '})
+
+
+def paragraph_matches(xml, dialect):
+    p = dialect[0]
+    return list(re.finditer(rf'<{p}(?=[\s>])[^>]*?(?:/>|(?<!/)>.*?</{p}>)', xml, re.S))
+
+
+def text_matches(par, dialect):
+    t = dialect[2]
+    return list(re.finditer(rf'(<{t}(?:\s[^>]*)?>)([^<]*)(</{t}>)', par))
+
+
+def paragraph_text(par, dialect):
+    return ''.join(unescape(m.group(2)) for m in text_matches(par, dialect))
+
+
+def paragraph_texts(xml, dialect):
+    return [paragraph_text(m.group(0), dialect) for m in paragraph_matches(xml, dialect)]
+
+
+def snippet(text, width=110):
+    return text if len(text) <= width else text[:width] + '...'
+
+
+def no_text_match_message(texts, needle, where, labels=None):
+    name = lambda n: labels[n - 1] if labels else f'paragraph {n}'
+    lines = [f'ERROR: no paragraph in {where} contains {needle!r}. Nothing changed.']
+    loose = needle.translate(LOOSE).lower()
+    for n, t in enumerate(texts, 1):
+        at = t.translate(LOOSE).lower().find(loose)
+        if at >= 0:
+            lines.append(f'{name(n)} matches if curly/straight quotes, dashes or non-breaking spaces are treated alike. '
+                         f'The exact text there is: {t[at:at + len(needle)]!r}')
+            return '\n'.join(lines)
+    scored = []
+    for n, t in enumerate(texts, 1):
+        m = SequenceMatcher(None, t.lower(), needle.lower(), autojunk=False).find_longest_match(0, len(t), 0, len(needle))
+        if m.size >= max(4, len(needle) // 3):
+            scored.append((m.size, n, t))
+    for _, n, t in sorted(scored, reverse=True)[:3]:
+        lines.append(f'Similar: {name(n)}: {snippet(t)!r}')
+    if len(lines) == 1:
+        lines.append('No similar paragraph. Check the spelling, or that this is the right part.')
+    return '\n'.join(lines)
+
+
+def edit_paragraph_text(par, dialect, old, new):
+    texts = text_matches(par, dialect)
+    pieces = [unescape(m.group(2)) for m in texts]
+    full = ''.join(pieces)
+    spans, at = [], full.find(old)
+    while at >= 0:
+        spans.append((at, at + len(old)))
+        at = full.find(old, at + len(old))
+    for a, b in reversed(spans):
+        offsets = [sum(map(len, pieces[:i])) for i in range(len(pieces))]
+        first = next(i for i in range(len(pieces)) if offsets[i] <= a < offsets[i] + len(pieces[i]))
+        last = next(i for i in range(len(pieces)) if offsets[i] < b <= offsets[i] + len(pieces[i]))
+        head, tail = pieces[first][:a - offsets[first]], pieces[last][b - offsets[last]:]
+        if first == last:
+            pieces[first] = head + new + tail
+        else:
+            pieces[first] = head + new
+            for i in range(first + 1, last):
+                pieces[i] = ''
+            pieces[last] = tail
+    emptied = False
+    for m, text in reversed(list(zip(texts, pieces))):
+        if text == unescape(m.group(2)):
+            continue
+        if not text:
+            par = par[:m.start()] + par[m.end():]
+            emptied = True
+            continue
+        opening = m.group(1)
+        if text != text.strip() and 'xml:space' not in opening:
+            opening = opening[:-1] + ' xml:space="preserve">'
+        par = par[:m.start()] + opening + escape(text) + m.group(3) + par[m.end():]
+    if not emptied:
+        return par
+    r = dialect[1]
+    return re.sub(rf'<{r}(?=[\s>])[^>]*?(?<!/)>(?:<{r}Pr(?:\s[^>]*?)?(?:/>|>(?:(?!</{r}>).)*?</{r}Pr>))?</{r}>', '', par, flags=re.S)
+
+
+def replace_text(xml, dialect, old, new, every, where):
+    if not old:
+        sys.exit('ERROR: OLD text is empty.')
+    if '\n' in new:
+        sys.exit('ERROR: NEW text must not contain a line break.')
+    matches = paragraph_matches(xml, dialect)
+    texts = [paragraph_text(m.group(0), dialect) for m in matches]
+    hits = [(n, t.count(old)) for n, t in enumerate(texts, 1) if old in t]
+    if not hits:
+        sys.exit(no_text_match_message(texts, old, where))
+    total = sum(c for _, c in hits)
+    if total > 1 and not every:
+        sys.exit(f'ERROR: {old!r} occurs {total} times (paragraphs {", ".join(str(n) for n, _ in hits)}). '
+                 'Use --all to change every one, or give a longer OLD text that occurs once. Nothing changed.')
+    out, at = [], 0
+    for n, m in enumerate(matches, 1):
+        if texts[n - 1].count(old):
+            out.append(xml[at:m.start()])
+            out.append(edit_paragraph_text(m.group(0), dialect, old, new))
+            at = m.end()
+    out.append(xml[at:])
+    return ''.join(out), total, [n for n, _ in hits]
+
+
+ANY_TAG = re.compile(r'<(/?)([A-Za-z][\w.-]*(?::[\w.-]+)?)((?:[^>"\']|"[^"]*"|\'[^\']*\')*?)(/?)>')
+
+
+def top_children(inner):
+    out, depth, start, name = [], 0, 0, ''
+    for m in ANY_TAG.finditer(inner):
+        closing, tag, selfclosed = m.group(1), m.group(2), m.group(4)
+        if closing:
+            depth -= 1
+            if depth == 0:
+                out.append((name, inner[start:m.end()]))
+        elif selfclosed:
+            if depth == 0:
+                out.append((tag, m.group(0)))
+        else:
+            if depth == 0:
+                start, name = m.start(), tag
+            depth += 1
+    return out
+
+
+# ---------- command line ----------
+
+def explain(e):
+    if isinstance(e, zipfile.BadZipFile):
+        return f'not a zip file ({e}). A .docx/.xlsx/.pptx is needed here, not an unpacked XML part or folder.'
+    if isinstance(e, FileNotFoundError):
+        return f'file not found: {e.filename}. A path that starts with an unexpected "/" means a shell variable was empty: set it again in the same command.'
+    if isinstance(e, IsADirectoryError):
+        return f'{e.filename} is a folder; a file is needed.'
+    if isinstance(e, UnicodeDecodeError):
+        return 'a binary file was given where an XML text part is needed (a .docx/.xlsx/.pptx must be unpacked first).'
+    if isinstance(e, KeyError):
+        return f'no such part inside the file: {e}'
+    return f'{type(e).__name__}: {e}'
+
+
+def cli(main):
+    debug = bool(os.environ.get('NN_DEBUG'))
+    if '--debug' in sys.argv:
+        sys.argv.remove('--debug')
+        debug = True
+    try:
+        main()
+    except (SystemExit, KeyboardInterrupt):
+        raise
+    except Exception as e:  # noqa: BLE001
+        if debug:
+            raise
+        sys.exit('ERROR: ' + ' '.join(explain(e).split()))
+
+
+def main():
     cmd, rest = (sys.argv[1], sys.argv[2:]) if len(sys.argv) > 1 else ('', [])
     if cmd == 'unpack' and len(rest) == 2:
         unpack(*rest)
@@ -345,3 +630,7 @@ if __name__ == '__main__':
         validate(rest)
     else:
         sys.exit(__doc__)
+
+
+if __name__ == '__main__':
+    cli(main)

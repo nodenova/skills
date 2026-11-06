@@ -1,5 +1,8 @@
 # Tracked changes and comments
 
+The snippets assume the unpacked folder `$W/x` from the steps in `word-xml.md`.
+Every shell call starts fresh: begin each with `S=<skill directory>; W="$TMPDIR/job1";`.
+
 ## Ids and dates
 
 Each `w:id` of a change or comment must be unique in the document. Use

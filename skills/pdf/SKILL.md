@@ -12,6 +12,11 @@ Writer, Calc, Impress), `pandoc`, ImageMagick `convert` (cannot read or
 write PDFs here), Python 3 (with lxml in Desk's image; no PDF libraries).
 There is no pypdf, no reportlab and no Ghostscript.
 
+**Every shell call starts fresh:** variables, `cd` and functions are gone, so
+use full paths and set `S=<skill directory>` (printed at the end of this text)
+in the same command. Never use `python3 -c` with text from a file in the
+quotes; write a script file with a quoted heredoc.
+
 ## Rules
 
 1. **Work in `$TMPDIR`.** Page images, split pages and drafts go there, never
@@ -39,8 +44,11 @@ pdftotext -layout "/abs/path/file.pdf" "$TMPDIR/file.txt"
 grep -n -i "termination" "$TMPDIR/file.txt"
 ```
 
-Pages are separated by a form feed (`\f`): to find the page of a match,
-`python3 -c "import sys; [print(i, 'HIT') for i, p in enumerate(open(sys.argv[1]).read().split('\f'), 1) if sys.argv[2].lower() in p.lower()]" "$TMPDIR/file.txt" "termination"`.
+To find the pages of a match (any case; `--pages 3-9` limits the range):
+
+```sh
+S=<skill directory>; python3 "$S/scripts/pdf_find.py" "/abs/path/file.pdf" "termination"
+```
 
 To see a page (layout, signatures, stamps, charts), render it and open the
 image with `read`:
