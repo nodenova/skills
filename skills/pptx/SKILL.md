@@ -1,6 +1,6 @@
 ---
 name: pptx
-description: Read, edit, create or convert PowerPoint presentations (.pptx) in NodeNova Desk. Use for any task that opens, changes or produces slides - reading a deck, changing slide text or speaker notes, reordering, deleting or duplicating slides, a new deck from an outline or a firm template, or a deck to PDF or images. Not for Word documents, spreadsheets or PDFs.
+description: Read, edit, create or convert PowerPoint presentations (.pptx) in NodeNova Desk. Use for any task that opens, changes or produces slides - reading a deck, changing slide text, dates or footers, speaker notes, swapping a picture or logo, reordering, deleting or duplicating slides, a new deck from an outline or a firm template, or a deck to PDF or images. Not for Word documents, spreadsheets or PDFs.
 ---
 
 # PowerPoint presentations (.pptx)
@@ -48,7 +48,12 @@ soffice --headless --convert-to pdf --outdir "$TMPDIR" "/abs/path/deck.pptx"
 pdftoppm -png -r 50 -f 3 -l 3 "$TMPDIR/deck.pdf" "$TMPDIR/slide"   # slide 3; ls "$TMPDIR" for the name
 ```
 
-`soffice` runs one call at a time; wait for it to finish before the next.
+`soffice` runs one call at a time; wait for it to finish before the next. If
+`soffice` is not found, skip the render and verify with `pptx_outline.py`.
+
+`pptx_outline.py` marks date, footer and slide-number placeholders and shows
+fields as `{datetime1: 11/3/2026}`; `--layouts` also lists those on layouts
+and masters. Pictures and logos are not text: `pptx_images.py list FILE`.
 
 ## Edit text
 
@@ -68,6 +73,12 @@ notes part is in the slide's `.rels`). If OLD is not found, the error shows
 the closest text: copy from it, not from memory. Errors are one line,
 `ERROR: ...`; fix the command, do not fall back to `python3 -c`.
 
+- Dates in footers sit in date placeholders, often on layouts and the master
+  too: add `--all-parts` to search them as well. A `datetime` field refreshes
+  itself when PowerPoint opens the file; add `--fixed` to make it plain text.
+- `pptx_images.py list FILE` / `pptx_images.py replace IN OUT --image ppt/media/image1.png --with NEW.png [--fit]`
+  swap a picture or logo (details: `cat "$S/references/pictures-and-dates.md"`).
+  Never print an image file to the terminal; use `file` or the list command.
 - Keep new text about as long as the old. If it is much longer, shorten it or
   ask; do not shrink the font unasked.
 - **Reorder, delete or duplicate slides:** `cat "$S/references/slides.md"`.
@@ -104,7 +115,9 @@ soffice --headless --convert-to pptx --outdir "$W" "/abs/path/deck.ppt"    # old
    `python3 "$S/scripts/pptx_outline.py" "$W/out.pptx" > "$W/after.txt"; diff "$W/before.txt" "$W/after.txt"`
 3. The changed slides look right: render them (as in "Read") and look at each
    one. Text stays inside its box and does not cover other shapes. If
-   `soffice` makes no PDF, or the page count is wrong, go back.
+   `soffice` makes no PDF, or the page count is wrong, go back. If `soffice`
+   is not found, skip this step: step 2 is the check, and say the slides were
+   not looked at.
 
 ## Save
 

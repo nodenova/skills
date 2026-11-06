@@ -52,7 +52,9 @@ soffice --headless --convert-to "csv:Text - txt - csv (StarCalc):44,34,UTF8,1,,0
 
 To see the layout, `soffice --headless --convert-to pdf --outdir "$TMPDIR" <file>`,
 then `pdftoppm -png -r 80 -f 1 -l 1 "$TMPDIR/<name>.pdf" "$TMPDIR/page"` and
-`read` the PNG. `soffice` runs one call at a time.
+`read` the PNG. `soffice` runs one call at a time. If `soffice` is not found,
+skip the render and `xlsx_check.py`; verify with `xlsx_dump.py` and say the
+formulas were not recalculated.
 
 ## Edit
 

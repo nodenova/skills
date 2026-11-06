@@ -1,6 +1,6 @@
 ---
 name: docx
-description: Read, edit, create or convert Word documents (.docx, .dotx) in NodeNova Desk. Use for any task that opens, changes or produces a Word file - find and replace, rewording a clause, tracked changes, comments, accepting changes, tables, headers and footers, a new report, memo or letter from text, or a docx to PDF. Not for PDFs, spreadsheets or slides.
+description: Read, edit, create or convert Word documents (.docx, .dotx) in NodeNova Desk. Use for any task that opens, changes or produces a Word file - find and replace, rewording a clause, tracked changes, comments, accepting changes, tables, headers and footers (text on every page), swapping a picture or logo, a new report, memo or letter from text, or a docx to PDF. Not for PDFs, spreadsheets or slides.
 ---
 
 # Word documents (.docx)
@@ -35,7 +35,8 @@ pandoc -t markdown "/abs/path/file.docx"                       # text, headings,
 pandoc --track-changes=all -t markdown "/abs/path/file.docx"   # also insertions, deletions, comments
 ```
 
-To see the layout, render a page and `read` the image (one `soffice` at a time):
+To see the layout, render a page and `read` the image (one `soffice` at a time;
+if `soffice` is not found, skip the render and verify with `pandoc` and `docx_images.py list`):
 
 ```sh
 W="$TMPDIR/job1"; mkdir -p "$W"; soffice --headless --convert-to pdf --outdir "$W" "/abs/path/file.docx"
@@ -65,13 +66,24 @@ python3 "$S/scripts/docx_replace_text.py" "/abs/path/file.docx" "$W/out.docx" "w
   change, and the old colour (theme colour too) is replaced.
 - `docx_replace_text.py IN OUT OLD NEW [--all]`: plain text, no XML. NEW takes
   the formatting of the run where OLD starts.
-- Header or footer: `--part word/header1.xml` (`docx_find.py FILE TEXT word/header1.xml`).
+- Header or footer text: `--part word/header1.xml` (`docx_find.py FILE TEXT word/header1.xml`).
+- `docx_header.py IN OUT --text TEXT [--footer] [--align left|center|right] [--replace] [--type default|first|even]`:
+  puts TEXT in the header (footer) of every page, creating it where missing;
+  pictures and page numbers in an existing header stay.
+- Pictures and logos are not text, so `docx_find.py` never finds them:
+  `docx_images.py list FILE` shows each picture (image file, pixel and shown
+  size, header/footer/body place, alt text, nearby text) and
+  `docx_images.py replace IN OUT --image word/media/image1.jpeg --with NEW.png [--fit]`
+  swaps one. **Never print an image or XML part whole** (`unzip -p`, `cat`,
+  `head -c` on `word/media/*` or a 400 KB `document.xml` fills your context);
+  use `file`, `identify` or the list command. No image to use (an emoji, a
+  new logo)? `cat "$S/references/pictures-and-headers.md"`.
 - A second edit starts from the first result: IN `"$W/out.docx"`, OUT `"$W/out2.docx"`.
 - Errors are one line, `ERROR: ...`. If TEXT or OLD is not found, it shows the
   closest text: copy from it, not from memory. Fix the command; do not fall
   back to `python3 -c`.
 
-Only for what these cannot do (new paragraphs, table rows, pictures, tracked
+Only for what these cannot do (new paragraphs, table rows, new pictures, tracked
 changes, comments) edit the XML by hand: `cat "$S/references/word-xml.md"`,
 and for redlines and comments also `cat "$S/references/tracked-changes-and-comments.md"`.
 
@@ -112,7 +124,9 @@ soffice --headless --convert-to docx --outdir "$W" "/abs/path/file.doc"   # old 
 2. The text changed only where intended:
    `pandoc -t plain --track-changes=all "/abs/path/file.docx" > "$W/before.txt"; pandoc -t plain --track-changes=all "$W/out.docx" > "$W/after.txt"; diff "$W/before.txt" "$W/after.txt"`
 3. It opens and looks right: render the changed page as in "Read" and look at
-   it. If `soffice` makes no PDF, the file is broken; do not save it.
+   it. If `soffice` makes no PDF, the file is broken; do not save it. If
+   `soffice` is not found, skip this step: check the text diff in step 2 and
+   `docx_images.py list "$W/out.docx"`, and say the layout was not looked at.
 
 ## Save
 

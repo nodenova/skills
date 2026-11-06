@@ -5,6 +5,7 @@ word/document.xml (use word/header1.xml etc. for other parts of a .docx or folde
 Prints every paragraph containing TEXT (any case): its number, text, runs with
 their formatting, and the paragraph mark's formatting. --xml adds the exact XML.
 Use the number with `docx_format.py --paragraph N`.
+No match for a picture or logo: they are not text; use `docx_images.py list FILE`.
 """
 import re
 import sys
@@ -72,7 +73,10 @@ def main():
     texts = [ooxml.paragraph_text(m.group(0), ooxml.DOCX) for m in pars]
     hits = [n for n, t in enumerate(texts, 1) if needle.lower() in t.lower()]
     if not hits:
-        sys.exit(ooxml.no_text_match_message(texts, needle, part))
+        hint = ('\nIf you are looking for a picture, logo, stamp or signature: it is not text, so no search finds it. '
+                'Run `docx_images.py list FILE` to list the pictures (body, headers, footers). '
+                'Text in headers and footers is searched by naming the part: `docx_find.py FILE TEXT word/header1.xml`.')
+        sys.exit(ooxml.no_text_match_message(texts, needle, part) + hint)
     for n in hits:
         style, mark, runs = describe_paragraph(pars[n - 1].group(0))
         print(f'--- paragraph {n} ({part})')

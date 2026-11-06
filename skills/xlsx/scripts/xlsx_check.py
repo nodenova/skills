@@ -15,6 +15,9 @@ def main():
     if len(sys.argv) < 2:
         sys.exit(__doc__)
     ooxml.need_zip(sys.argv[1], 'FILE')
+    if not shutil.which('soffice'):
+        sys.exit('ERROR: `soffice` (LibreOffice) is not installed here, so formulas cannot be recalculated. '
+                 'Skip this step; check the changed cells with xlsx_dump.py and tell the user the results were not recalculated.')
     src = sys.argv[1]
     work = tempfile.mkdtemp(dir=os.environ.get('TMPDIR') or None)
     nov = os.path.join(work, 'novalues.xlsx')
