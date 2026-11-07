@@ -485,6 +485,10 @@ def snippet(text, width=110):
 def no_text_match_message(texts, needle, where, labels=None):
     name = lambda n: labels[n - 1] if labels else f'paragraph {n}'
     lines = [f'ERROR: no paragraph in {where} contains {needle!r}. Nothing changed.']
+    if '\t' in needle:
+        lines.append('The text has a tab: that is a table row as `read` shows it, and each cell is its own paragraph. '
+                     'Use the text of one cell.')
+        return '\n'.join(lines)
     loose = needle.translate(LOOSE).lower()
     for n, t in enumerate(texts, 1):
         at = t.translate(LOOSE).lower().find(loose)

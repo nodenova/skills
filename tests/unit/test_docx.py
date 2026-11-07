@@ -121,6 +121,22 @@ class DocxScripts(unittest.TestCase):
             self.assertEqual(names, [n for n in order if n in names], names)
             self.assertEqual(sorted(names), sorted(set(order) - {'rStyle'}))
 
+    def test_format_takes_every_paragraph_given(self):
+        code, out = run('docx_format.py', self.src, self.out, '--paragraph', '2', '--paragraph', '5,6', '--color', 'dark red')
+        self.assertEqual(code, 0, out)
+        self.assertIn('formatted 3 of 6 paragraphs (2, 5, 6)', out)
+        coloured = {''.join(t.text for t in p.iter(f'{{{W}}}t')): {c.attrib[f'{{{W}}}val'] for c in p.iter(f'{{{W}}}color')}
+                    for p in self.paragraphs(self.out)}
+        self.assertEqual(coloured['Dear Sir,'], {'8B0000'})
+        self.assertEqual(coloured['Late payment incurs a fee.'], {'8B0000'})
+        self.assertEqual(coloured['Late payment is not tolerated.'], {'8B0000'})
+        self.assertEqual(coloured['Payment is due within 30 days & no later.'], set())
+
+    def test_a_table_row_as_text_points_at_one_cell(self):
+        code, out = run('docx_replace_text.py', self.src, self.out, 'Dear Sir,\tLate payment', 'x')
+        self.assertEqual(code, 1)
+        self.assertIn('each cell is its own paragraph', out)
+
     def test_format_needs_one_choice_when_ambiguous(self):
         code, out = run('docx_format.py', self.src, self.out, '--paragraph-containing', 'Late payment', '--bold')
         self.assertEqual(code, 1)

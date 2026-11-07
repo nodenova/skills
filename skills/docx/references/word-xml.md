@@ -1,7 +1,8 @@
 # Writing Word XML
 
-Use this only for what `docx_format.py` and `docx_replace_text.py` cannot do:
-new paragraphs, table rows, pictures, tracked changes, comments.
+Use this for what `docx_format.py` and `docx_replace_text.py` cannot do:
+new paragraphs, table rows, pictures, tracked changes, comments. For one
+change across the whole document, see "The whole document" in SKILL.md.
 
 ## Steps
 

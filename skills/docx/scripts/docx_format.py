@@ -3,7 +3,8 @@
 Change character formatting of whole paragraphs without writing XML.
 
 PICK (one):
-  --paragraph N                 paragraph number as printed by docx_find.py
+  --paragraph N                 paragraph number as printed by docx_find.py; repeat it
+                                or give a list (--paragraph 3,7,12) for several
   --paragraph-containing TEXT   paragraphs whose text contains TEXT (any case)
     --occurrence K              only the K-th such paragraph (1 = first)
     --all                       every such paragraph
@@ -31,7 +32,9 @@ RANK = {name: i for i, name in enumerate(ORDER)}
 FOREIGN, LAST = 500, 1000
 COLORS = {'black': '000000', 'white': 'FFFFFF', 'red': 'FF0000', 'green': '008000', 'blue': '0000FF',
           'yellow': 'FFFF00', 'orange': 'FFA500', 'purple': '800080', 'gray': '808080', 'grey': '808080',
-          'navy': '000080', 'teal': '008080', 'maroon': '800000', 'auto': 'auto'}
+          'navy': '000080', 'teal': '008080', 'maroon': '800000', 'darkred': '8B0000', 'darkblue': '00008B',
+          'darkgreen': '006400', 'darkgray': 'A9A9A9', 'darkgrey': 'A9A9A9', 'darkorange': 'FF8C00',
+          'auto': 'auto'}
 HIGHLIGHTS = {h.lower(): h for h in 'black blue cyan green magenta red yellow white darkBlue darkCyan '
                                    'darkGreen darkMagenta darkRed darkYellow darkGray lightGray none'.split()}
 
@@ -45,7 +48,7 @@ def parse():
     p = Parser(add_help=False)
     p.add_argument('src')
     p.add_argument('out')
-    p.add_argument('--paragraph', type=int)
+    p.add_argument('--paragraph', action='append')
     p.add_argument('--paragraph-containing')
     p.add_argument('--occurrence', type=int)
     p.add_argument('--all', action='store_true')
@@ -60,13 +63,18 @@ def parse():
     a = p.parse_args()
     if (a.paragraph is None) == (a.paragraph_containing is None):
         p.error('give exactly one of --paragraph N or --paragraph-containing TEXT')
+    if a.paragraph is not None:
+        try:
+            a.paragraph = [int(n) for item in a.paragraph for n in item.replace(' ', '').split(',') if n]
+        except ValueError:
+            p.error('--paragraph takes numbers, for example --paragraph 3 or --paragraph 3,7,12')
     return a
 
 
 def wanted_properties(a):
     out, summary = {}, []
     if a.color is not None:
-        value = COLORS.get(a.color.lower(), a.color.lstrip('#').upper())
+        value = COLORS.get(a.color.lower().replace(' ', '').replace('-', ''), a.color.lstrip('#').upper())
         if value != 'auto' and not re.fullmatch(r'[0-9A-F]{6}', value):
             sys.exit(f'ERROR: --color {a.color!r}: use six hex digits such as FF0000, or a name: {", ".join(COLORS)}')
         out['color'] = f'<w:color w:val="{value}"/>'
@@ -166,9 +174,10 @@ def main():
     pars = ooxml.paragraph_matches(xml, ooxml.DOCX)
     texts = [ooxml.paragraph_text(m.group(0), ooxml.DOCX) for m in pars]
     if a.paragraph is not None:
-        if not 1 <= a.paragraph <= len(pars):
-            sys.exit(f'ERROR: paragraph {a.paragraph} does not exist; {a.part} has {len(pars)} paragraphs.')
-        picked = [a.paragraph]
+        missing = [n for n in a.paragraph if not 1 <= n <= len(pars)]
+        if missing:
+            sys.exit(f'ERROR: paragraph {missing[0]} does not exist; {a.part} has {len(pars)} paragraphs. Nothing changed.')
+        picked = sorted(set(a.paragraph))
     else:
         hits = [n for n, t in enumerate(texts, 1) if a.paragraph_containing.lower() in t.lower()]
         if not hits:
@@ -196,7 +205,8 @@ def main():
     if new_xml == xml:
         sys.exit('ERROR: the paragraph already has that formatting; nothing to change, nothing written.')
     what = ' '.join(summary)
-    print(f'formatted paragraph{"s" if len(picked) > 1 else ""} {", ".join(map(str, picked))}: {total_runs} run(s), '
+    shown = ', '.join(map(str, picked)) if len(picked) <= 12 else f'{picked[0]} to {picked[-1]}'
+    print(f'formatted {len(picked)} of {len(pars)} paragraphs ({shown}): {total_runs} run(s), '
           f'{marks} paragraph mark(s); {what}')
     ooxml.repack(a.src, a.out, {a.part: new_xml.encode('utf-8')})
 
